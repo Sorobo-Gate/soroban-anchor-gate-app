@@ -7,6 +7,7 @@ out/
 # Go build artifacts
 services/relay/main
 services/relay/relay
+*.exe
 
 # Environment
 .env
