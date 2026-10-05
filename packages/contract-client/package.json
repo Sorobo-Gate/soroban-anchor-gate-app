@@ -4,12 +4,15 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc"
+    "build": "node node_modules/typescript/lib/tsc.js",
+    "typecheck": "node node_modules/typescript/lib/tsc.js --noEmit",
+    "test": "node node_modules/typescript/lib/tsc.js && node --test dist/index.test.js"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^12.0.0"
   },
   "devDependencies": {
+    "@types/node": "^20.11.0",
     "typescript": "^5.4.0"
   }
 }
