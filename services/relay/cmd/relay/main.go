@@ -17,7 +17,7 @@ func main() {
 
 	contractID := os.Getenv("SOROBAN_CONTRACT_ID")
 	if contractID == "" {
-		contractID = "CCCSLE7UN2FRLB2HQWEUEXM4365NDYH3QSC6J5TILQWBSTTIDKFWXX2Y"
+		contractID = "CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA"
 	}
 
 	rpcURL := os.Getenv("SOROBAN_RPC_URL")
@@ -32,18 +32,37 @@ func main() {
 		}
 	}
 
+	storePath := os.Getenv("STORE_PATH")
+	if storePath == "" {
+		storePath = "data/relay_store.json"
+	}
+
+	var relayStore store.IdempotencyStore
+	if storePath == ":memory:" {
+		relayStore = store.NewMemoryStore(startLedger)
+	} else {
+		durableStore, err := store.NewDurableFileStore(storePath, startLedger)
+		if err != nil {
+			logger.Error("Failed to initialize durable file store, using memory store fallback", "error", err)
+			relayStore = store.NewMemoryStore(startLedger)
+		} else {
+			relayStore = durableStore
+			defer durableStore.Close()
+		}
+	}
+
 	logger.Info("SorobanAnchor Gate Relay daemon starting",
 		"rpc_url", rpcURL,
 		"contract_id", contractID,
-		"start_ledger", startLedger,
+		"start_ledger", relayStore.GetCursor(),
+		"store_path", storePath,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	memStore := store.NewMemoryStore(startLedger)
 	eventChan := make(chan listener.EventPayload, 100)
-	sub := listener.NewEventSubscriber(rpcURL, contractID, memStore, logger)
+	sub := listener.NewEventSubscriber(rpcURL, contractID, relayStore, logger)
 
 	go func() {
 		if err := sub.PollEvents(ctx, eventChan); err != nil && err != context.Canceled {
@@ -64,6 +83,11 @@ func main() {
 					"amount", payload.PayoutAmount.String(),
 					"profile_hash", payload.ProfileHashHex,
 				)
+
+				// Complete processing after downstream handling
+				if err := relayStore.MarkCompleted(payload.EventID); err != nil {
+					logger.Error("Failed to mark event completed", "event_id", payload.EventID, "error", err)
+				}
 			case <-ctx.Done():
 				return
 			}
