@@ -100,6 +100,11 @@ jobs:
           cd apps/web
           npm run typecheck
 
+      - name: Run Web Unit Tests
+        run: |
+          cd apps/web
+          npm run test
+
       - name: Production Next.js Build
         run: |
           cd apps/web
