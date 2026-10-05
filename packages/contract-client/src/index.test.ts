@@ -97,7 +97,7 @@ describe("EscrowGateClient & SDK Helpers", () => {
     assert.strictEqual(scValToNative(args[2]), validToken);
     assert.strictEqual(scValToNative(args[3]), 500000000n);
     assert.strictEqual(
-      Buffer.from(args[4].bytes()).toString("hex"),
+      Buffer.from(scValToNative(args[4]) as Uint8Array).toString("hex"),
       profileHashHex
     );
     assert.strictEqual(scValToNative(args[5]), 86400n);
@@ -148,7 +148,7 @@ describe("EscrowGateClient & SDK Helpers", () => {
     const client = new EscrowGateClient(validConfig);
     const args = client.buildRefundTx(10n);
     const op = client.buildOperation("refund", args);
-    assert.strictEqual(op.body().switch().name, "invokeHostFunction");
+    assert.strictEqual(op.body.type, "invokeHostFunction");
   });
 
   test("contract state enum match", () => {
