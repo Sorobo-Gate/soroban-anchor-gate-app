@@ -8,8 +8,8 @@ This document details the function, argument, type, event, and state parity betw
 
 | Function | Contract Arguments | TypeScript SDK Method (`packages/contract-client`) | Description |
 |---|---|---|---|
-| `init` | `admin: Address, anchor_address: Address` | `buildInitTx(admin, anchor)` | Initializes contract admin and anchor parameters |
-| `create_escrow` | `payer: Address`, `beneficiary: Address`, `token: Address`, `amount: i128`, `profile_hash: BytesN<32>`, `lock_duration: u64` | `buildCreateEscrowTx({ payer, beneficiary, token, amount, profileHashHex, lockDurationSeconds })` | Locks token deposit in escrow with 32-byte profile commitment |
+| `init` | `admin: Address`, `treasury: Address`, `fee_bps: u32` | `buildInitTx({ admin, treasury, feeBps })` | Initializes contract admin, treasury, and fee basis points (0..10,000) |
+| `create_escrow` | `payer: Address`, `beneficiary: Address`, `token: Address`, `amount: i128`, `lock_duration: u64`, `profile_hash: BytesN<32>` | `buildCreateEscrowTx({ payer, beneficiary, token, amount, lockDurationSeconds, profileHashHex })` | Locks token deposit in escrow with 32-byte profile commitment |
 | `release_to_anchor` | `escrow_id: u64`, `caller: Address`, `anchor_disbursement_address: Address` | `buildReleaseToAnchorTx({ escrowId, caller, anchorDisbursementAddress })` | Releases escrow funds to anchor disbursement address |
 | `refund` | `escrow_id: u64` | `buildRefundTx(escrowId)` | Refunds locked escrow to payer after lock duration expires |
 
@@ -32,7 +32,7 @@ stateDiagram-v2
 | `Disbursed` | Escrow released to anchor for off-ramp payout | `Disbursed` |
 | `Refunded` | Escrow returned to depositor after timelock | `Refunded` |
 
-> ⚠️ **State Correction**: The app previously rendered `Funded → Disbursed → Settled`. The contract contains **no `Settled` variant**. The frontend status display has been updated to strictly reflect `Funded → Disbursed → Refunded`.
+> ⚠️ **State Correction**: The app previously rendered `Funded → Disbursed → Settled`. The contract contains **no `Settled` variant**. The frontend status display strictly reflects `Funded → Disbursed → Refunded`.
 
 ---
 
@@ -40,9 +40,9 @@ stateDiagram-v2
 
 | Contract Event Topic | Topic XDR Symbol | Payload Type | Relay Listener Topic (`services/relay`) |
 |---|---|---|---|
-| `disbursed` | `Symbol("disbursed")` | `(escrow_id: u64, amount: i128, profile_hash: BytesN<32>)` | `disbursed` |
+| `disbursed` | `[Symbol("disbursed"), u64(escrow_id)]` | `(profile_hash: BytesN<32>, payout_amount: i128)` | `disbursed` |
 
-> ⚠️ **Relay Correction**: The Go relay service previously logged polling for `DisbursementAuthorized`. The contract emits `disbursed`. The Go listener has been updated to decode `disbursed` events.
+> ⚠️ **Event Format**: The contract emits topic `["disbursed", escrow_id]` and tuple payload `(profile_hash, payout_amount)`. The Go relay listener decodes both the topic escrow ID and the payload profile hash and i128 payout amount into `*big.Int`.
 
 ---
 
@@ -54,3 +54,4 @@ stateDiagram-v2
 | `escrow_id` | `u64` | `bigint` | `uint64` | Native unsigned 64-bit integer |
 | `lock_duration` | `u64` | `bigint` | `uint64` | Seconds |
 | `profile_hash` | `BytesN<32>` | `string` (64-char hex / 32 bytes) | `[32]byte` | Strictly validated 32-byte SHA-256 digest |
+| `fee_bps` | `u32` | `number` | N/A | Validated range `0 <= fee_bps <= 10000` |
