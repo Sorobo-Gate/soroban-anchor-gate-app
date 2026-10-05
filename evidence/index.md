@@ -8,22 +8,31 @@ This document maps all protocol claims and features to their empirical source co
 
 | System / Feature | Verification Level | Source Files | Automated Test Suite | Empirical Evidence |
 |---|---|---|---|---|
-| **Contract Parity & Functions** | `VERIFIED` | [`packages/contract-client/src/index.ts`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/packages/contract-client/src/index.ts) | `packages/contract-client/src/index.test.ts` (10/10 passed) | [`docs/contract-parity.md`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/docs/contract-parity.md) |
-| **Non-Custodial Freighter Wallet** | `VERIFIED` | [`apps/web/src/app/page.tsx`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/apps/web/src/app/page.tsx) | `npm run typecheck`, Next.js Build | [`evidence/testnet-2026-10-05.md`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/evidence/testnet-2026-10-05.md) |
-| **Client-Side SHA-256 Profile Hash** | `VERIFIED` | [`apps/web/src/lib/crypto.ts`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/apps/web/src/lib/crypto.ts) | `computeProfileHash` unit tests | [`evidence/testnet-2026-10-05.md`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/evidence/testnet-2026-10-05.md) |
-| **Integer-Safe Token Math** | `VERIFIED` | [`packages/contract-client/src/index.ts`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/packages/contract-client/src/index.ts) | `parseTokenAmount` unit tests | SDK test suite |
-| **Soroban RPC Event Poller** | `TESTED LOCALLY` | [`services/relay/internal/listener/subscriber.go`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/services/relay/internal/listener/subscriber.go) | `go test -v -race ./...` (Passed) | [`docs/relay.md`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/docs/relay.md) |
-| **i128 Event Payout Decoding** | `TESTED LOCALLY` | `subscriber.go` (`math/big.Int`) | `subscriber_test.go` | Go test suite |
-| **Idempotency & Cursor Tracker** | `TESTED LOCALLY` | [`services/relay/internal/store/idempotency.go`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/services/relay/internal/store/idempotency.go) | `idempotency_test.go` | Go test suite |
-| **Monorepo CI Workflows** | `VERIFIED` | [`.github/workflows/ci.yml`](file:///c:/Users/user/Desktop/drips/soroban-anchor-gate-app/.github/workflows/ci.yml) | GitHub Actions CI | `ci.yml` |
+| **Contract Parity & Functions** | `VERIFIED ONCHAIN` | [`packages/contract-client/src/index.ts`](../packages/contract-client/src/index.ts) | `packages/contract-client/src/index.test.ts` (13/13 passed) | [`evidence/testnet-verified-2026-10-05.md`](./testnet-verified-2026-10-05.md) |
+| **Escrow Creation Onchain** | `VERIFIED ONCHAIN` | [`apps/web/src/lib/transaction.ts`](../apps/web/src/lib/transaction.ts) | `apps/web/src/lib/transaction.test.ts` (10/10 passed) | [`evidence/testnet-verified-2026-10-05.md`](./testnet-verified-2026-10-05.md) (Tx `a32176a0...`) |
+| **Client-Side SHA-256 Profile Hash** | `VERIFIED` | [`apps/web/src/lib/crypto.ts`](../apps/web/src/lib/crypto.ts) | `apps/web/src/lib/crypto.test.ts` (6/6 passed) | [`evidence/testnet-verified-2026-10-05.md`](./testnet-verified-2026-10-05.md) |
+| **Integer-Safe Token Math** | `VERIFIED` | [`packages/contract-client/src/index.ts`](../packages/contract-client/src/index.ts) | `packages/contract-client/src/index.test.ts` | SDK test suite |
+| **Soroban RPC Event Poller** | `TESTED LOCALLY` | [`services/relay/internal/listener/subscriber.go`](../services/relay/internal/listener/subscriber.go) | `go test -v -race ./internal/listener/...` (11/11 passed) | [`docs/relay.md`](../docs/relay.md) |
+| **i128 Event Payout Decoding** | `TESTED LOCALLY` | [`services/relay/internal/listener/subscriber.go`](../services/relay/internal/listener/subscriber.go) | `subscriber_test.go` (`*big.Int`) | Go test suite |
+| **Durable Store & Idempotency** | `TESTED LOCALLY` | [`services/relay/internal/store/idempotency.go`](../services/relay/internal/store/idempotency.go) | `idempotency_test.go` (4/4 passed) | Go test suite |
+| **Monorepo CI Workflows** | `VERIFIED` | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | GitHub Actions CI (Passing) | CI workflow definitions |
+| **Non-Custodial Freighter Extension Boundary** | `UNVERIFIED` | [`apps/web/src/app/page.tsx`](../apps/web/src/app/page.tsx) | Typecheck & Build Clean | Requires interactive physical browser with extension |
 | **SEP-10 / SEP-31 Off-Ramp Gateway** | `KNOWN LIMITATION` | N/A | N/A | Documented limitation |
 
 ---
 
+## Historical & Invalidation Records
+
+- [`evidence/testnet-2026-10-05.md`](./testnet-2026-10-05.md): Historical report reclassified as **INVALID EVIDENCE / AUDIT NOTICE** due to synthetic addresses and empty string hash.
+- [`evidence/testnet-verified-2026-10-05.md`](./testnet-verified-2026-10-05.md): Authoritative empirical Testnet transaction proof on ledger `5036360`.
+
+---
+
 ## Status Classification Key
-- **`VERIFIED`**: Full end-to-end implementation with automated tests and live Testnet verification.
-- **`TESTED LOCALLY`**: Implementation validated locally with 100% passing test suite.
+- **`VERIFIED ONCHAIN`**: Live Stellar Testnet transaction executed, confirmed on ledger, and explorer link documented.
+- **`VERIFIED`**: Full end-to-end implementation validated via automated test suite and cryptographic proofs.
+- **`TESTED LOCALLY`**: Implementation validated locally with 100% passing unit and race condition test suite.
 - **`LOGICALLY COVERED`**: Feature logic implemented and typechecked; awaiting live partner testnet anchors.
-- **`UNVERIFIED`**: Feature definition present in specifications; awaiting dedicated testnet infrastructure.
+- **`UNVERIFIED`**: Boundary requiring interactive physical user/extension presence; simulation strictly avoided.
 - **`KNOWN LIMITATION`**: Functional limitation explicitly documented in public documentation.
 - **`BLOCKED`**: Upstream external dependency missing or inaccessible.
