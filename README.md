@@ -31,17 +31,19 @@ Built with **Next.js 16**, **React 19**, and **Tailwind CSS**.
 
 ### ✨ Features
 - **Freighter Wallet Integration**: Connect wallet, verify network passphrase, and sign transactions via `@stellar/freighter-api`.
+- **Authoritative Soroban RPC Pipeline**: Real simulation (`simulateTransaction`), transaction assembly (`assembleTransaction`), wallet signing, and polling (`getTransaction`). Zero mocked `setTimeout` confirmations.
 - **SHA-256 Profile Hashing**: Hashes banking routing info into a 32-byte `profile_hash` commitment on client. Raw PII is never stored onchain.
 - **Integer-Safe Token Math**: Convert token amounts to 7-decimal integer base units using `bigint`.
 - **Precise Status Semantics**: Status progression: `idle` → `wallet-required` → `preparing` → `simulating` → `awaiting-signature` → `submitting` → `pending` → `confirmed` / `failed`.
 - **Contract Parity Lifecycle**: Displays `Funded → Disbursed → Refunded` matching authoritative Soroban contract states.
 
 ### 🚀 Getting Started
-Prerequisites: Node.js >=22.12.0 (required for `@stellar/stellar-sdk` and `@stellar/js-xdr`).
+Prerequisites: Node.js >=20.18.0 (aligned with `@stellar/stellar-sdk`).
 ```bash
 cd apps/web
 npm install
 npm run typecheck
+npm run test
 npm run build
 npm run dev
 ```
@@ -53,9 +55,10 @@ npm run dev
 Narrowly scoped SDK for interacting with the `SorobanAnchor Gate` contract.
 
 ### ✨ Features
-- **Invocation Builders**: Build parameter XDR arrays for `init`, `create_escrow`, `release_to_anchor`, and `refund`.
+- **Invocation Builders**: Build parameter XDR arrays for `init(admin, treasury, fee_bps)`, `create_escrow`, `release_to_anchor`, and `refund`.
 - **Validation Helpers**: Validate Ed25519 public keys, contract addresses, and 32-byte hex profile hashes.
 - **Integer-Safe Math**: `parseTokenAmount` and `formatTokenAmount` helpers avoiding JS floating-point rounding errors.
+- **Zero CVE Dependencies**: Upgraded to `@stellar/stellar-sdk@17.2.0`.
 
 ### 🧪 Running Tests & Build
 ```bash
@@ -75,7 +78,7 @@ Background service written in **Go 1.22+** that monitors Soroban RPC for contrac
 ### ✨ Features
 - **Soroban Event Listener**: Periodically queries `getEvents` on Soroban RPC for `disbursed` events.
 - **Full Domain Numeric Precision**: Decodes token payout amounts into `math/big.Int` without integer truncation.
-- **Idempotency Store**: Thread-safe memory store preventing duplicate processing of event IDs.
+- **Durable File-Backed Store**: Thread-safe file store (`DurableFileStore`) with crash recovery, tracking event state lifecycle (`observed` → `claimed` → `processing` → `completed` / `failed`).
 - **Ledger Cursor Tracking**: Persists and advances ledger sequence cursor across polling windows.
 
 ### 🧪 Running Tests & Build
@@ -92,13 +95,16 @@ go build ./cmd/relay/main.go
 
 | Surface / Feature | Implementation Status | Verification Details |
 |---|---|---|
-| **Soroban Escrow SDK** | `VERIFIED` | 10/10 unit tests passing |
-| **Freighter Wallet Flow** | `VERIFIED` | Client-side wallet access & signing |
-| **Go Event Poller** | `TESTED LOCALLY` | RPC event listener & `disbursed` decoder tests passing |
-| **Idempotency & Cursor** | `TESTED LOCALLY` | Thread-safe store tests passing |
+| **Soroban Escrow SDK** | `VERIFIED` | 13/13 unit tests passing, full contract signature parity |
+| **Escrow Creation Onchain** | `VERIFIED ONCHAIN` | Tested on Testnet (Tx `a32176a0...`, ledger 5036360) |
+| **Freighter Wallet Boundary** | `UNVERIFIED` | Browser extension boundary requires interactive physical browser; simulation prohibited |
+| **Go Event Poller & Decoder** | `TESTED LOCALLY` | 11/11 tests passing with `-race`, real XDR event decoding |
+| **Durable Store & Idempotency** | `TESTED LOCALLY` | 4/4 tests passing with `-race`, crash recovery and explicit states |
 | **SEP-10 / SEP-31 Integration** | `KNOWN LIMITATION` | Requires active anchor partner endpoint |
 
-For detailed audit logs and security policies, see:
+For detailed audit logs and verification records, see:
+- [`evidence/testnet-verified-2026-10-05.md`](evidence/testnet-verified-2026-10-05.md)
+- [`evidence/index.md`](evidence/index.md)
 - [`AUDIT/branch-state.md`](AUDIT/branch-state.md)
 - [`AUDIT/git-history-remediation.md`](AUDIT/git-history-remediation.md)
 - [`AUDIT/readme-claims.md`](AUDIT/readme-claims.md)
