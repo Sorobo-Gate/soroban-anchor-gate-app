@@ -5,14 +5,10 @@ import {
   isConnected,
   requestAccess,
   getAddress,
+  getNetworkDetails,
   signTransaction,
 } from "@stellar/freighter-api";
-import {
-  Address,
-  Contract,
-  nativeToScVal,
-  xdr,
-} from "@stellar/stellar-sdk";
+import { rpc } from "@stellar/stellar-sdk";
 import {
   ArrowRight,
   CheckCircle2,
@@ -37,7 +33,16 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { getAppConfig } from "@/lib/config";
-import { hashRoutingInfo, parseTokenAmount } from "@/lib/crypto";
+import { hashRoutingInfo } from "@/lib/crypto";
+import {
+  validateEscrowForm,
+  verifyWalletNetwork,
+  buildEscrowContractCall,
+  buildInitialTransaction,
+  simulateAndPrepareTransaction,
+  submitSignedTransaction,
+  pollTransactionConfirmation,
+} from "@/lib/transaction";
 
 export type EscrowStatusState =
   | "idle"
@@ -56,9 +61,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [beneficiary, setBeneficiary] = useState("");
   const [amount, setAmount] = useState("");
-  const [tokenAddress, setTokenAddress] = useState(
-    "CDLZFC3SYJYDVR72CC2CPRFGDZBEYFNCZFDMJGQDVRWXDQF3DHB5ADB4"
-  );
+  const [tokenAddress, setTokenAddress] = useState(config.nativeSacTokenAddress);
   const [routingInfo, setRoutingInfo] = useState("");
   const [lockDurationDays, setLockDurationDays] = useState("7");
 
@@ -118,40 +121,63 @@ export default function HomePage() {
     }
 
     try {
+      // 1. Verify Freighter wallet network identity
+      try {
+        const netDetails = await getNetworkDetails();
+        verifyWalletNetwork(netDetails, config.networkPassphrase);
+      } catch (netErr: unknown) {
+        const msg = netErr instanceof Error ? netErr.message : String(netErr);
+        setTxState("failed");
+        setStatusMessage(msg);
+        return;
+      }
+
+      // 2. Validate all inputs
+      const validated = validateEscrowForm({
+        payer: walletAddress,
+        beneficiary,
+        token: tokenAddress,
+        amount,
+        lockDurationDays,
+        routingInfo,
+      });
+
       setTxState("preparing");
       setStatusMessage("Hashing sensitive routing information into 32-byte profile_hash commitment...");
 
-      // 1. Compute deterministic SHA-256 profile_hash from routing parameters
-      const computedProfileHashHex = await hashRoutingInfo(routingInfo);
+      // 3. Compute deterministic SHA-256 profile_hash
+      const computedProfileHashHex = await hashRoutingInfo(validated.routingInfo);
       setProfileHashDisplay(computedProfileHashHex);
 
-      // 2. Parse integer-safe token amount (7 decimal places)
-      const baseUnitsAmount = parseTokenAmount(amount, 7);
-      const lockDurationSeconds = BigInt(parseInt(lockDurationDays, 10) * 86400);
-
       setTxState("simulating");
-      setStatusMessage("Building Soroban transaction payload & validating arguments...");
+      setStatusMessage("Building Soroban transaction envelope & simulating execution on Testnet...");
 
-      // 3. Construct Soroban create_escrow invocation parameters
-      const hashBytes = Buffer.from(computedProfileHashHex, "hex");
-      const contract = new Contract(config.contractId);
-      const operation = contract.call(
-        "create_escrow",
-        new Address(walletAddress).toScVal(),
-        new Address(beneficiary).toScVal(),
-        new Address(tokenAddress).toScVal(),
-        nativeToScVal(baseUnitsAmount, { type: "i128" }),
-        xdr.ScVal.scvBytes(hashBytes),
-        nativeToScVal(lockDurationSeconds, { type: "u64" })
+      // 4. Construct Soroban RPC server and build contract invocation
+      const server = new rpc.Server(config.rpcUrl);
+      const operation = buildEscrowContractCall(
+        config.contractId,
+        validated,
+        computedProfileHashHex
       );
+
+      // 5. Fetch source sequence and build transaction
+      const initialTx = await buildInitialTransaction(
+        server,
+        walletAddress,
+        operation,
+        config.networkPassphrase
+      );
+
+      // 6. Simulate through Soroban RPC & assemble footprint/auth
+      const { preparedTx } = await simulateAndPrepareTransaction(server, initialTx);
 
       setTxState("awaiting-signature");
       setStatusMessage("Requesting transaction signature in Freighter extension...");
 
-      // 4. Request transaction signature via Freighter
+      // 7. Request Freighter signature over prepared transaction XDR
       let signedTxXdr = "";
       try {
-        const signResult = await signTransaction(operation.toXdr("base64"), {
+        const signResult = await signTransaction(preparedTx.toXDR(), {
           networkPassphrase: config.networkPassphrase,
         });
         if (typeof signResult === "string") {
@@ -167,45 +193,39 @@ export default function HomePage() {
         return;
       }
 
+      if (!signedTxXdr) {
+        throw new Error("Freighter did not return a signed transaction envelope");
+      }
+
       setTxState("submitting");
       setStatusMessage("Submitting signed transaction envelope XDR to Stellar RPC...");
 
-      // 5. Submit to Stellar RPC
-      const rpcPayload = {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "sendTransaction",
-        params: { transaction: signedTxXdr },
-      };
+      // 8. Submit to Stellar RPC
+      const realTxHash = await submitSignedTransaction(
+        server,
+        signedTxXdr,
+        config.networkPassphrase
+      );
 
-      const rpcRes = await fetch(config.rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rpcPayload),
-      });
-
-      const rpcJson = await rpcRes.json();
-      if (rpcJson.error) {
-        setTxState("failed");
-        setStatusMessage(`RPC submission failed: ${rpcJson.error.message || JSON.stringify(rpcJson.error)}`);
-        return;
-      }
-
-      const hash = rpcJson.result?.hash || "0x_simulated_tx_hash";
-      setTxHash(hash);
+      setTxHash(realTxHash);
       setTxState("pending");
-      setStatusMessage("Transaction submitted! Polling Stellar Testnet for ledger confirmation...");
+      setStatusMessage(
+        `Transaction submitted to Testnet mempool! Polling getTransaction (${realTxHash.slice(
+          0,
+          8
+        )}...) for authoritative ledger confirmation...`
+      );
 
-      // 6. Verification & status polling simulation boundary
-      setTimeout(() => {
-        setTxState("confirmed");
-        setStatusMessage(
-          `Escrow successfully initialized onchain! Locked ${amount} tokens for contractor. Profile hash: ${computedProfileHashHex.slice(
-            0,
-            12
-          )}...`
-        );
-      }, 3000);
+      // 9. Authoritative getTransaction confirmation polling
+      const confirmation = await pollTransactionConfirmation(server, realTxHash);
+
+      setTxState("confirmed");
+      setStatusMessage(
+        `Escrow successfully confirmed onchain in ledger ${confirmation.ledger}! Locked ${amount} tokens for beneficiary. Profile hash: ${computedProfileHashHex.slice(
+          0,
+          12
+        )}...`
+      );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setTxState("failed");
@@ -214,8 +234,9 @@ export default function HomePage() {
   };
 
   const parsedAmount = parseFloat(amount) || 0;
-  const protocolFee = (parsedAmount * 0.02).toFixed(2);
-  const anchorPayout = (parsedAmount - parseFloat(protocolFee)).toFixed(2);
+  // Estimated display based on authoritative contract deployment config (200 BPS / 2%)
+  const protocolFeeEst = (parsedAmount * 0.02).toFixed(2);
+  const anchorPayoutEst = (parsedAmount - parseFloat(protocolFeeEst)).toFixed(2);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col justify-between">
@@ -253,7 +274,7 @@ export default function HomePage() {
                   Stellar Testnet
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-secondary/20 text-secondary-foreground border border-secondary/40 font-mono">
-                  Protocol Fee: 200 BPS
+                  Contract Fee Config: 200 BPS (2.00%)
                 </span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-foreground">
@@ -316,7 +337,7 @@ export default function HomePage() {
                     <Input
                       type="number"
                       step="0.0000001"
-                      placeholder="1000.00"
+                      placeholder="100.00"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       required
@@ -338,10 +359,10 @@ export default function HomePage() {
 
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Protocol Fee (2.0%)
+                      Est. Protocol Fee (200 BPS)
                     </label>
                     <div className="h-11 flex items-center px-4 rounded-xl border border-border bg-muted/40 font-mono text-sm text-muted-foreground">
-                      {amount ? `${protocolFee} USDC` : "0.00 USDC"}
+                      {amount ? `${protocolFeeEst} tokens` : "0.00 tokens"}
                     </div>
                   </div>
                 </div>
@@ -384,16 +405,22 @@ export default function HomePage() {
                 )}
 
                 <div className="p-4 rounded-xl border border-border bg-input/40 flex items-center justify-between text-xs font-mono">
-                  <span className="text-muted-foreground">Beneficiary Net Anchor Payout:</span>
+                  <span className="text-muted-foreground">Est. Net Anchor Disbursement:</span>
                   <span className="text-primary font-bold">
-                    {parsedAmount > 0 ? `${anchorPayout} USDC equiv.` : "—"}
+                    {parsedAmount > 0 ? `${anchorPayoutEst} tokens` : "—"}
                   </span>
                 </div>
 
                 <Button
                   type="submit"
                   className="w-full h-12 text-base"
-                  disabled={txState === "preparing" || txState === "simulating" || txState === "awaiting-signature" || txState === "submitting" || txState === "pending"}
+                  disabled={
+                    txState === "preparing" ||
+                    txState === "simulating" ||
+                    txState === "awaiting-signature" ||
+                    txState === "submitting" ||
+                    txState === "pending"
+                  }
                 >
                   {txState === "preparing" && (
                     <>
@@ -404,7 +431,7 @@ export default function HomePage() {
                   {txState === "simulating" && (
                     <>
                       <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                      <span>Simulating Soroban Call...</span>
+                      <span>Simulating Soroban Transaction...</span>
                     </>
                   )}
                   {txState === "awaiting-signature" && (
@@ -416,16 +443,19 @@ export default function HomePage() {
                   {txState === "submitting" && (
                     <>
                       <Send className="w-4 h-4 mr-2 animate-pulse" />
-                      <span>Submitting to Testnet...</span>
+                      <span>Submitting to Testnet RPC...</span>
                     </>
                   )}
                   {txState === "pending" && (
                     <>
                       <Clock className="w-4 h-4 mr-2 animate-spin" />
-                      <span>Polling Ledger Confirmation...</span>
+                      <span>Authoritatively Polling Confirmation...</span>
                     </>
                   )}
-                  {(txState === "idle" || txState === "confirmed" || txState === "failed" || txState === "wallet-required") && (
+                  {(txState === "idle" ||
+                    txState === "confirmed" ||
+                    txState === "failed" ||
+                    txState === "wallet-required") && (
                     <>
                       <span>Initialize Escrow on Testnet</span>
                       <ArrowRight className="w-4 h-4 ml-2" />
