@@ -37,6 +37,7 @@ Built with **Next.js 16**, **React 19**, and **Tailwind CSS**.
 - **Contract Parity Lifecycle**: Displays `Funded → Disbursed → Refunded` matching authoritative Soroban contract states.
 
 ### 🚀 Getting Started
+Prerequisites: Node.js >=22.12.0 (required for `@stellar/stellar-sdk` and `@stellar/js-xdr`).
 ```bash
 cd apps/web
 npm install
