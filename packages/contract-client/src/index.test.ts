@@ -3,6 +3,7 @@ import { test, describe } from "node:test";
 import {
   EscrowGateClient,
   EscrowContractState,
+  EscrowError,
   computeProfileHash,
   formatTokenAmount,
   isValidAddress,
@@ -13,7 +14,9 @@ import {
 import { Keypair, scValToNative } from "@stellar/stellar-sdk";
 
 describe("EscrowGateClient & SDK Helpers", () => {
-  const validContractId = "CCCSLE7UN2FRLB2HQWEUEXM4365NDYH3QSC6J5TILQWBSTTIDKFWXX2Y";
+  const validContractId = "CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA";
+  const validAdmin = Keypair.random().publicKey();
+  const validTreasury = Keypair.random().publicKey();
   const validPayer = Keypair.random().publicKey();
   const validBeneficiary = Keypair.random().publicKey();
   const validToken = Keypair.random().publicKey();
@@ -122,9 +125,48 @@ describe("EscrowGateClient & SDK Helpers", () => {
     assert.strictEqual(scValToNative(args[0]), 100n);
   });
 
+  test("buildInitTx encodes admin, treasury, and fee_bps with contract parity", () => {
+    const client = new EscrowGateClient(validConfig);
+    const args = client.buildInitTx(validAdmin, validTreasury, 200);
+
+    assert.strictEqual(args.length, 3);
+    assert.strictEqual(scValToNative(args[0]), validAdmin);
+    assert.strictEqual(scValToNative(args[1]), validTreasury);
+    assert.strictEqual(scValToNative(args[2]), 200);
+
+    // Rejects fee_bps > 1000 (contract InvalidBps)
+    assert.throws(() => client.buildInitTx(validAdmin, validTreasury, 1001));
+    // Rejects negative fee_bps
+    assert.throws(() => client.buildInitTx(validAdmin, validTreasury, -1));
+    // Rejects non-integer fee_bps
+    assert.throws(() => client.buildInitTx(validAdmin, validTreasury, 2.5));
+    // Rejects invalid address
+    assert.throws(() => client.buildInitTx("INVALID", validTreasury, 200));
+  });
+
+  test("buildOperation generates contract invocation operation", () => {
+    const client = new EscrowGateClient(validConfig);
+    const args = client.buildRefundTx(10n);
+    const op = client.buildOperation("refund", args);
+    assert.strictEqual(op.body().switch().name, "invokeHostFunction");
+  });
+
   test("contract state enum match", () => {
     assert.strictEqual(EscrowContractState.Funded, "Funded");
     assert.strictEqual(EscrowContractState.Disbursed, "Disbursed");
     assert.strictEqual(EscrowContractState.Refunded, "Refunded");
+  });
+
+  test("contract error enum parity match", () => {
+    assert.strictEqual(EscrowError.NotInitialized, 1);
+    assert.strictEqual(EscrowError.AlreadyInitialized, 2);
+    assert.strictEqual(EscrowError.Unauthorized, 3);
+    assert.strictEqual(EscrowError.EscrowNotFound, 4);
+    assert.strictEqual(EscrowError.InvalidStatus, 5);
+    assert.strictEqual(EscrowError.UnlockTimeNotReached, 6);
+    assert.strictEqual(EscrowError.UnlockTimePassed, 7);
+    assert.strictEqual(EscrowError.ZeroAmount, 8);
+    assert.strictEqual(EscrowError.InvalidBps, 9);
+    assert.strictEqual(EscrowError.ArithmeticOverflow, 10);
   });
 });

@@ -37,6 +37,19 @@ export enum EscrowContractState {
   Refunded = "Refunded",
 }
 
+export enum EscrowError {
+  NotInitialized = 1,
+  AlreadyInitialized = 2,
+  Unauthorized = 3,
+  EscrowNotFound = 4,
+  InvalidStatus = 5,
+  UnlockTimeNotReached = 6,
+  UnlockTimePassed = 7,
+  ZeroAmount = 8,
+  InvalidBps = 9,
+  ArithmeticOverflow = 10,
+}
+
 export function validateClientConfig(config: ClientConfig): void {
   if (!config.contractId || !StrKey.isValidContract(config.contractId)) {
     throw new Error(`Invalid contract ID format: ${config.contractId}`);
@@ -74,7 +87,7 @@ export function parseTokenAmount(amountStr: string, decimals: number = 7): bigin
     throw new Error(`Invalid token amount string: ${amountStr}`);
   }
   const parts = amountStr.trim().split(".");
-  let integerPart = parts[0] || "0";
+  const integerPart = parts[0] || "0";
   let fractionalPart = parts[1] || "";
 
   if (fractionalPart.length > decimals) {
@@ -104,13 +117,17 @@ export class EscrowGateClient {
     this.contract = new Contract(config.contractId);
   }
 
-  public buildInitTx(admin: string, anchorAddress: string): xdr.ScVal[] {
-    if (!isValidAddress(admin) || !isValidAddress(anchorAddress)) {
-      throw new Error("Invalid admin or anchor address");
+  public buildInitTx(admin: string, treasury: string, feeBps: number): xdr.ScVal[] {
+    if (!isValidAddress(admin) || !isValidAddress(treasury)) {
+      throw new Error("Invalid admin or treasury address");
+    }
+    if (feeBps < 0 || feeBps > 1000 || !Number.isInteger(feeBps)) {
+      throw new Error("feeBps must be an integer between 0 and 1000 (inclusive)");
     }
     return [
       new Address(admin).toScVal(),
-      new Address(anchorAddress).toScVal(),
+      new Address(treasury).toScVal(),
+      nativeToScVal(feeBps, { type: "u32" }),
     ];
   }
 
