@@ -14,7 +14,7 @@ export function parseTokenAmount(amountStr: string, decimals: number = 7): bigin
     throw new Error(`Invalid token amount string: ${amountStr}`);
   }
   const parts = amountStr.trim().split(".");
-  let integerPart = parts[0] || "0";
+  const integerPart = parts[0] || "0";
   let fractionalPart = parts[1] || "";
 
   if (fractionalPart.length > decimals) {

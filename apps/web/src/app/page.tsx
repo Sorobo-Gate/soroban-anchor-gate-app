@@ -10,8 +10,6 @@ import {
 import {
   Address,
   Contract,
-  Operation,
-  TransactionBuilder,
   nativeToScVal,
   xdr,
 } from "@stellar/stellar-sdk";
@@ -79,7 +77,7 @@ export default function HomePage() {
             setWalletAddress(addr.address);
           }
         }
-      } catch (e) {
+      } catch {
         // Silently handle initial wallet check
       }
     }
@@ -102,8 +100,9 @@ export default function HomePage() {
         setWalletAddress(addressObj.address);
         setTxState("idle");
       }
-    } catch (err: any) {
-      alert("Failed to connect wallet: " + (err?.message || String(err)));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert("Failed to connect wallet: " + msg);
     } finally {
       setLoading(false);
     }
@@ -155,10 +154,16 @@ export default function HomePage() {
         const signResult = await signTransaction(operation.toXdr("base64"), {
           networkPassphrase: config.networkPassphrase,
         });
-        signedTxXdr = typeof signResult === "string" ? signResult : (signResult as any).signedTxXdr || "";
-      } catch (signErr: any) {
+        if (typeof signResult === "string") {
+          signedTxXdr = signResult;
+        } else if (signResult && typeof signResult === "object" && "signedTxXdr" in signResult) {
+          const resultObj = signResult as { signedTxXdr?: string };
+          signedTxXdr = resultObj.signedTxXdr || "";
+        }
+      } catch (signErr: unknown) {
+        const msg = signErr instanceof Error ? signErr.message : String(signErr);
         setTxState("failed");
-        setStatusMessage(`Signature rejected or failed in wallet: ${signErr?.message || String(signErr)}`);
+        setStatusMessage(`Signature rejected or failed in wallet: ${msg}`);
         return;
       }
 
@@ -201,9 +206,10 @@ export default function HomePage() {
           )}...`
         );
       }, 3000);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       setTxState("failed");
-      setStatusMessage(`Escrow transaction failed: ${err?.message || String(err)}`);
+      setStatusMessage(`Escrow transaction failed: ${msg}`);
     }
   };
 
