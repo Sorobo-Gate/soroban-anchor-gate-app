@@ -64,23 +64,23 @@ type RPCError struct {
 }
 
 type GetEventsResult struct {
-	Events        []EventItem `json:"events"`
-	LatestLedger  uint32      `json:"latestLedger"`
+	Events       []EventItem `json:"events"`
+	LatestLedger uint32      `json:"latestLedger"`
 }
 
 type EventItem struct {
-	ID                  string   `json:"id"`
-	Type                string   `json:"type"`
-	Ledger              uint32   `json:"ledger"`
-	LedgerClosedAt      string   `json:"ledgerClosedAt"`
-	ContractID          string   `json:"contractId"`
-	Topic               []string `json:"topic"`
-	Value               EventValue `json:"value"`
-	InSuccessfulContractCall bool `json:"inSuccessfulContractCall"`
+	ID                       string     `json:"id"`
+	Type                     string     `json:"type"`
+	Ledger                   uint32     `json:"ledger"`
+	LedgerClosedAt           string     `json:"ledgerClosedAt"`
+	ContractID               string     `json:"contractId"`
+	Topic                    []string   `json:"topic"`
+	Value                    EventValue `json:"value"`
+	InSuccessfulContractCall bool       `json:"inSuccessfulContractCall"`
 }
 
 type EventValue struct {
-	XDR string `json:"xdr"`
+	XDR string      `json:"xdr"`
 	Raw interface{} `json:"raw,omitempty"`
 }
 
