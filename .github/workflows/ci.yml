@@ -56,7 +56,7 @@ jobs:
       - name: Install SDK Dependencies
         run: |
           cd packages/contract-client
-          npm install
+          npm ci
 
       - name: Run SDK Typecheck
         run: |
@@ -87,7 +87,7 @@ jobs:
       - name: Install Web Dependencies
         run: |
           cd apps/web
-          npm install
+          npm ci
 
       - name: Run ESLint Verification
         run: |
