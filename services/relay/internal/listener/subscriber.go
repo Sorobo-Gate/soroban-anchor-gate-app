@@ -3,6 +3,8 @@ package listener
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/soroban-anchor-gate/relay/internal/store"
@@ -124,14 +127,18 @@ func (s *EventSubscriber) PollEvents(ctx context.Context, eventChan chan<- Event
 					continue
 				}
 
-				if err := s.store.MarkProcessed(payload.EventID); err != nil {
-					s.logger.Warn("Failed to mark event processed", "event_id", payload.EventID, "error", err)
+				if err := s.store.RecordObserved(payload.EventID); err != nil {
+					s.logger.Debug("Event already observed", "event_id", payload.EventID, "error", err)
+				}
+
+				if err := s.store.ClaimForProcessing(payload.EventID); err != nil {
+					s.logger.Warn("Failed to claim event for processing", "event_id", payload.EventID, "error", err)
 					continue
 				}
 
 				select {
 				case eventChan <- payload:
-					s.logger.Info("Disbursed event processed and emitted", "event_id", payload.EventID, "escrow_id", payload.EscrowID, "amount", payload.PayoutAmount.String())
+					s.logger.Info("Disbursed event claimed and emitted to processing channel", "event_id", payload.EventID, "escrow_id", payload.EscrowID, "amount", payload.PayoutAmount.String())
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -155,6 +162,9 @@ func (s *EventSubscriber) fetchEventsFromRPC(ctx context.Context, startLedger ui
 				{
 					Type:        "contract",
 					ContractIDs: []string{s.contractID},
+					Topics: [][]string{
+						{"AAAADwAAAAlkaXNidXJzZWQAAAA=", "*"},
+					},
 				},
 			},
 		},
@@ -199,48 +209,46 @@ func DecodeDisbursedEvent(item EventItem, expectedContractID string) (EventPaylo
 		return EventPayload{}, fmt.Errorf("contract ID mismatch: expected %s, got %s", expectedContractID, item.ContractID)
 	}
 
-	// Topic validation: must contain "disbursed"
-	topicMatch := false
-	for _, t := range item.Topic {
-		if t == "disbursed" || t == "AAAADwAAAAFkaXNidXJzZWQ=" {
-			topicMatch = true
-			break
-		}
-	}
-	if !topicMatch {
-		return EventPayload{}, fmt.Errorf("event topic does not match expected symbol 'disbursed'")
+	if !item.InSuccessfulContractCall {
+		return EventPayload{}, fmt.Errorf("event from failed contract call")
 	}
 
-	// Parse raw value or XDR
-	var escrowID uint64 = 0
-	payoutAmount := big.NewInt(0)
-	profileHashHex := ""
-
-	if rawMap, ok := item.Value.Raw.(map[string]interface{}); ok {
-		if idVal, ok := rawMap["escrow_id"].(float64); ok {
-			escrowID = uint64(idVal)
-		}
-		if amtStr, ok := rawMap["amount"].(string); ok {
-			if _, ok := payoutAmount.SetString(amtStr, 10); !ok {
-				return EventPayload{}, fmt.Errorf("invalid i128 amount string domain: %s", amtStr)
-			}
-		}
-		if hashVal, ok := rawMap["profile_hash"].(string); ok {
-			profileHashHex = hashVal
-		}
-	} else {
-		// Mock/fallback decoder for JSON-RPC test payloads
-		payoutAmount.SetInt64(1000000000)
-		profileHashHex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	if len(item.Topic) < 2 {
+		return EventPayload{}, fmt.Errorf("insufficient event topics: expected at least symbol and escrow_id, got %d", len(item.Topic))
 	}
 
-	if profileHashHex != "" && len(profileHashHex) != 64 {
-		return EventPayload{}, fmt.Errorf("profile_hash_hex must be exactly 64 hex characters, got length %d", len(profileHashHex))
+	// 1. Topic 0: symbol "disbursed"
+	sym, err := decodeSymbolTopic(item.Topic[0])
+	if err != nil {
+		return EventPayload{}, fmt.Errorf("failed to decode topic symbol: %w", err)
 	}
-	if profileHashHex != "" {
-		if _, err := hex.DecodeString(profileHashHex); err != nil {
-			return EventPayload{}, fmt.Errorf("invalid profile_hash_hex: %w", err)
-		}
+	if sym != "disbursed" {
+		return EventPayload{}, fmt.Errorf("event topic symbol mismatch: expected 'disbursed', got '%s'", sym)
+	}
+
+	// 2. Topic 1: escrow_id (u64)
+	escrowID, err := decodeEscrowIDTopic(item.Topic[1])
+	if err != nil {
+		return EventPayload{}, fmt.Errorf("failed to decode escrow ID: %w", err)
+	}
+
+	// 3. Value: ScVal tuple (profile_hash: BytesN<32>, payout_amount: i128)
+	if item.Value.XDR == "" {
+		return EventPayload{}, fmt.Errorf("missing value XDR payload in event item")
+	}
+
+	valBytes, err := base64.StdEncoding.DecodeString(item.Value.XDR)
+	if err != nil {
+		return EventPayload{}, fmt.Errorf("invalid base64 in value XDR: %w", err)
+	}
+
+	profileHashHex, payoutAmount, err := decodeDisbursedValueXDR(valBytes)
+	if err != nil {
+		return EventPayload{}, fmt.Errorf("malformed disbursed value XDR: %w", err)
+	}
+
+	if len(profileHashHex) != 64 {
+		return EventPayload{}, fmt.Errorf("invalid profile hash length: expected 64 hex chars (32 bytes), got %d", len(profileHashHex))
 	}
 
 	if payoutAmount.Cmp(big.NewInt(0)) <= 0 {
@@ -255,4 +263,142 @@ func DecodeDisbursedEvent(item EventItem, expectedContractID string) (EventPaylo
 		ContractID:     item.ContractID,
 		Ledger:         item.Ledger,
 	}, nil
+}
+
+func decodeSymbolTopic(topicStr string) (string, error) {
+	if topicStr == "disbursed" {
+		return "disbursed", nil
+	}
+
+	data, err := base64.StdEncoding.DecodeString(topicStr)
+	if err != nil {
+		return topicStr, nil
+	}
+
+	if len(data) < 8 {
+		return "", fmt.Errorf("symbol XDR too short: %d bytes", len(data))
+	}
+
+	discriminator := binary.BigEndian.Uint32(data[0:4])
+	if discriminator != 15 && discriminator != 14 { // ScvSymbol = 15, ScvString = 14
+		return "", fmt.Errorf("unexpected discriminator for symbol: %d", discriminator)
+	}
+
+	strLen := int(binary.BigEndian.Uint32(data[4:8]))
+	if len(data) < 8+strLen {
+		return "", fmt.Errorf("symbol XDR string truncated: declared %d, available %d", strLen, len(data)-8)
+	}
+
+	return string(data[8 : 8+strLen]), nil
+}
+
+func decodeEscrowIDTopic(topicStr string) (uint64, error) {
+	data, err := base64.StdEncoding.DecodeString(topicStr)
+	if err != nil || len(data) < 4 {
+		// Fallback to plain decimal string parsing
+		val, parseErr := strconv.ParseUint(topicStr, 10, 64)
+		if parseErr != nil {
+			return 0, fmt.Errorf("invalid escrow_id topic format: %w", parseErr)
+		}
+		return val, nil
+	}
+
+	discriminator := binary.BigEndian.Uint32(data[0:4])
+	switch discriminator {
+	case 5: // ScvU64
+		if len(data) < 12 {
+			return 0, fmt.Errorf("truncated ScvU64 topic: %d bytes", len(data))
+		}
+		return binary.BigEndian.Uint64(data[4:12]), nil
+	case 3: // ScvU32
+		if len(data) < 8 {
+			return 0, fmt.Errorf("truncated ScvU32 topic: %d bytes", len(data))
+		}
+		return uint64(binary.BigEndian.Uint32(data[4:8])), nil
+	default:
+		// Attempt numeric parse on string
+		val, parseErr := strconv.ParseUint(topicStr, 10, 64)
+		if parseErr == nil {
+			return val, nil
+		}
+		return 0, fmt.Errorf("unsupported ScVal discriminator for escrow_id: %d", discriminator)
+	}
+}
+
+func decodeDisbursedValueXDR(data []byte) (string, *big.Int, error) {
+	// Must be ScvVec (discriminator 16) with 2 elements: [BytesN<32>, i128]
+	if len(data) < 12 {
+		return "", nil, fmt.Errorf("XDR payload too short: %d bytes", len(data))
+	}
+
+	discriminator := binary.BigEndian.Uint32(data[0:4])
+	if discriminator != 16 {
+		return "", nil, fmt.Errorf("expected ScvVec discriminator (16), got %d", discriminator)
+	}
+
+	hasVec := binary.BigEndian.Uint32(data[4:8])
+	if hasVec == 0 {
+		return "", nil, fmt.Errorf("empty ScvVec payload")
+	}
+
+	numElements := binary.BigEndian.Uint32(data[8:12])
+	if numElements != 2 {
+		return "", nil, fmt.Errorf("expected 2 elements in disbursed tuple, got %d", numElements)
+	}
+
+	offset := 12
+	// Element 0: BytesN<32> (ScvBytes, discriminator 13)
+	if len(data) < offset+8 {
+		return "", nil, fmt.Errorf("truncated ScvBytes header")
+	}
+
+	elem0Disc := binary.BigEndian.Uint32(data[offset : offset+4])
+	if elem0Disc != 13 {
+		return "", nil, fmt.Errorf("expected ScvBytes discriminator (13) for profile_hash, got %d", elem0Disc)
+	}
+	offset += 4
+
+	bytesLen := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+	offset += 4
+
+	if bytesLen != 32 {
+		return "", nil, fmt.Errorf("expected exactly 32 bytes for profile_hash, got %d", bytesLen)
+	}
+
+	if len(data) < offset+bytesLen {
+		return "", nil, fmt.Errorf("truncated profile_hash bytes: expected %d, got %d", bytesLen, len(data)-offset)
+	}
+
+	profileHash := hex.EncodeToString(data[offset : offset+bytesLen])
+	offset += bytesLen
+	// XDR 4-byte padding
+	if rem := bytesLen % 4; rem != 0 {
+		offset += (4 - rem)
+	}
+
+	// Element 1: i128 (ScvI128, discriminator 10) or u128 (discriminator 9)
+	if len(data) < offset+4 {
+		return "", nil, fmt.Errorf("truncated ScvI128 header")
+	}
+
+	elem1Disc := binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
+
+	if elem1Disc != 10 && elem1Disc != 9 {
+		return "", nil, fmt.Errorf("expected ScvI128 (10) or ScvU128 (9) for payout_amount, got %d", elem1Disc)
+	}
+
+	if len(data) < offset+16 {
+		return "", nil, fmt.Errorf("truncated 128-bit integer bytes: expected 16, got %d", len(data)-offset)
+	}
+
+	intBytes := data[offset : offset+16]
+
+	// Check sign bit for ScvI128
+	if elem1Disc == 10 && (intBytes[0]&0x80) != 0 {
+		return "", nil, fmt.Errorf("payout amount is negative (two's complement sign bit set)")
+	}
+
+	payoutAmount := new(big.Int).SetBytes(intBytes)
+	return profileHash, payoutAmount, nil
 }
