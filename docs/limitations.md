@@ -1,0 +1,16 @@
+# Known Limitations & Audit Disclaimers
+
+## Implementation Status Classification
+
+| Boundary / System | Status | Description |
+|---|---|---|
+| **Soroban Smart Contract Client** | `VERIFIED` | Full TypeScript SDK for `create_escrow`, `release_to_anchor`, and `refund` invocations with unit tests |
+| **Freighter Wallet Integration** | `VERIFIED` | Real Freighter connection, access request, transaction building, and signature flow |
+| **Soroban Event Listening** | `TESTED LOCALLY` | Go relay daemon with RPC event poller, `disbursed` event decoder, and idempotency store |
+| **SEP-1 Anchor Discovery** | `UNVERIFIED` | Standard `stellar.toml` discovery endpoints require active anchor hosting |
+| **SEP-10 Web Authentication** | `PLANNED` | Challenge-response authentication workflow planned for off-ramp anchor gateways |
+| **SEP-12 / SEP-31 Payout Rail** | `KNOWN LIMITATION` | Full live banking payout execution requires integrated anchor partner credentials |
+
+## Audit Status
+
+This codebase is under active open-source development and has not undergone a formal third-party cryptographic security audit. Do not deploy to Stellar Mainnet with real capital without independent verification.
