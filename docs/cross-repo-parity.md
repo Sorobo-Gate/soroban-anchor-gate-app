@@ -18,4 +18,4 @@ This matrix compares exact smart contract functions and data types in [`Sorobo-G
 | **Profile Hash** | `BytesN<32>` | SHA-256 64-char hex | `computeProfileHash` SHA-256 | `[32]byte` hex check | `VERIFIED` (Real digest `e0a9e37d...`) |
 | **Contract Event** | `["disbursed", escrow_id]` topic, `(profile_hash, amount)` data | Event types | Polling UI | `disbursed` RPC decoder | `VERIFIED` |
 | **Stellar Network** | Testnet (`Test SDF Network ; September 2015`) | Testnet passphrase | Testnet passphrase | Testnet RPC URL | `VERIFIED` |
-| **Contract Address** | `CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA` | Validated contract ID | Configured contract ID | Configured contract ID | `VERIFIED ONCHAIN` |
+| **Contract Address** | `CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT` | Validated contract ID | Configured contract ID | Configured contract ID | `VERIFIED ONCHAIN` |
