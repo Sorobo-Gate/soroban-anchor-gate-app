@@ -15,7 +15,7 @@ describe("Frontend Financial Transaction Flow & Validation", () => {
   const validPayer = Keypair.random().publicKey();
   const validBeneficiary = Keypair.random().publicKey();
   const validContractId =
-    "CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA";
+    "CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT";
   const validTokenContract =
     "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
   const expectedPassphrase = "Test SDF Network ; September 2015";
