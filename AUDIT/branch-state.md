@@ -3,17 +3,25 @@
 ## Current Observed Branch Topology
 
 ```
-* 4671d6a (HEAD -> develop, origin/develop, origin/HEAD) docs(relay): update configuration parameters with contract ID and durable store
-* 3f3c6a8 docs: align deployment configuration with verified contract ID and durable store
-* b34fb0a docs: update cross repo parity matrix with contract ID and method signatures
-* 1989966 docs: align contract parity spec with init signature and event tuple format
-* e80d617 docs(audit): update readme claims audit with contract parity and durable store
-* 0168259 docs(audit): document single file commit enforcement and linear history
-* ab3d061 docs: update README with durable store details and verified testnet references
-* 10d8990 docs(evidence): update verification index and correct path references
-* 7cbef2f docs(evidence): record verified testnet transaction and real profile hash
-* 669d894 docs(evidence): mark synthetic testnet artifact invalid
-... [36 single-file remediation commits]
+* 8239442 (HEAD -> develop, origin/develop, origin/HEAD) docs(readme): update testnet evidence references for contract CBIHLECK
+* 6fb5fe9 docs(evidence): annotate testnet-verified-2026-10-05 report as historical CD36A2 deployment
+* 4af324a docs(evidence): update verification index with 2026-10-06 report reference
+* 8137cf2 docs(evidence): document verified testnet evidence for contract CBIHLECK
+* 0b6ae60 docs(audit): document subsequent commit batching analysis and safety constraints
+* f01da21 docs(audit): update deployed contract claim to CBIHLECK
+* e700072 docs(parity): update contract address to CBIHLECK in parity matrix
+* 6f92b1b docs(relay): update contract ID to CBIHLECK in relay documentation
+* 0234d08 docs(deployment): update deployment coordinates for contract CBIHLECK
+* 69ec200 test(relay): align subscriber tests with contract CBIHLECK
+* 95c9574 feat(relay): update default contract ID to CBIHLECK in daemon
+* 1888c3e test(web): align transaction tests with contract CBIHLECK
+* 314f07e test(web): verify production configuration enforcement
+* 0b2d7a4 feat(web): update default contract ID to CBIHLECK and enforce in production
+* 7464d76 test(sdk): update test contract ID to verified deployment CBIHLECK
+* 02c2b06 build(web): update lockfile for source-map-js 1.2.2
+* 84d6768 fix(deps): bump source-map-js to 1.2.2 in web dependencies
+* 1daea66 ci: remove invalid gofmt ecosystem from dependabot config
+... [40+ single-file atomic remediation commits]
 * 745d95e build(sdk): add lockfile for contract client package
 ... [historical commits]
 * a93c145 (origin/main) Create CONTRIBUTING.md
