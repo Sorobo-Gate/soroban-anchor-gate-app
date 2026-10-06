@@ -16,7 +16,7 @@ The Go Relay service (`services/relay`) monitors the Soroban blockchain for smar
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `SOROBAN_CONTRACT_ID` | Yes | `CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA` | Deployed Soroban escrow contract ID |
+| `SOROBAN_CONTRACT_ID` | Yes | `CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT` | Deployed Soroban escrow contract ID |
 | `SOROBAN_RPC_URL` | Yes | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint URL |
 | `START_LEDGER` | No | `1` | Starting ledger sequence for event query window |
 | `RELAY_STORE_PATH` | No | `""` (in-memory) or path | Durable file path for event state and cursor persistence |
