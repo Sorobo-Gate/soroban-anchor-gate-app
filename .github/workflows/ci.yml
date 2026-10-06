@@ -106,6 +106,8 @@ jobs:
           npm run test
 
       - name: Production Next.js Build
+        env:
+          NEXT_PUBLIC_ESCROW_CONTRACT_ID: CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT
         run: |
           cd apps/web
           npm run build
