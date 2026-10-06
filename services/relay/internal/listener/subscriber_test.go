@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	testContractID = "CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA"
+	testContractID = "CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT"
 	testProfileHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	// XDR generated from authoritative Stellar SDK and contract event specification:
