@@ -47,4 +47,22 @@ describe("Application Configuration Validation", () => {
       "Test SDF Network ; September 2015"
     );
   });
+
+  test("getAppConfig throws in production when contract ID is unset", () => {
+    const origEnv = process.env.NODE_ENV;
+    const origContract = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ID;
+    try {
+      (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+      delete process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ID;
+      assert.throws(
+        () => getAppConfig(),
+        /NEXT_PUBLIC_ESCROW_CONTRACT_ID is required in production environment/
+      );
+    } finally {
+      (process.env as Record<string, string | undefined>).NODE_ENV = origEnv;
+      if (origContract !== undefined) {
+        process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ID = origContract;
+      }
+    }
+  });
 });
