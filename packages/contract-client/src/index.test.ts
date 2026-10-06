@@ -14,7 +14,8 @@ import {
 import { Keypair, scValToNative } from "@stellar/stellar-sdk";
 
 describe("EscrowGateClient & SDK Helpers", () => {
-  const validContractId = "CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA";
+  const validContractId =
+    "CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT";
   const validAdmin = Keypair.random().publicKey();
   const validTreasury = Keypair.random().publicKey();
   const validPayer = Keypair.random().publicKey();
