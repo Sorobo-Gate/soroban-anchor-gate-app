@@ -27,16 +27,85 @@ Inspection of git log revealed historical commit batching across multiple compon
 
 ---
 
-## 2. History Preservation & Safety Decision
+## 2. Subsequent Commit Batching Analysis
 
-- **Safety Check**: Commits `0590a656`, `7a4cdd15`, and `38e72868` are part of the published default branch history on `origin/develop`.
+Further inspection of intermediate commits preceding remediation revealed additional bundled commits:
+
+### Commit `e30ac116` (`feat(sdk): implement contract client with integer-safe math and unit tests`)
+- **What Changed**: Bundled 11 distinct responsibilities across 3 files:
+  1. Client config validation (`validateClientConfig`)
+  2. Stellar address format validation (`isValidAddress`)
+  3. Sensitive profile hashing (`computeProfileHash`)
+  4. Hex string profile validation (`validateProfileHashHex`)
+  5. Integer-safe token amount parsing (`parseTokenAmount`)
+  6. Integer-safe amount formatting (`formatTokenAmount`)
+  7. Escrow creation transaction argument builder (`buildCreateEscrowTx`)
+  8. Milestone release transaction argument builder (`buildReleaseToAnchorTx`)
+  9. Timelock refund transaction argument builder (`buildRefundTx`)
+  10. Contract invocation operation builder (`buildOperation`)
+  11. Contract execution result decoder (`decodeContractResult`) and 13 unit tests.
+- **Reviewability Impact**: A reviewer could not revert the amount parser or refund builder without reverting the entire client interface.
+- **Remote / Shared Status**: Published to `origin/develop`.
+
+### Commit `3fba7e77` (`feat(relay): implement event poller, disbursed event decoder, idempotency store, and tests`)
+- **What Changed**: Bundled 7 distinct subsystems across 5 files:
+  1. Stellar RPC event poller (`PollEvents`)
+  2. Disbursed event XDR decoder (`DecodeDisbursedEvent`)
+  3. Ledger cursor tracking logic
+  4. In-memory idempotency store (`MemoryStore`)
+  5. Relay daemon entrypoint wiring (`main.go`)
+  6. Subscriber event unit tests (`subscriber_test.go`)
+  7. Store idempotency unit tests (`idempotency_test.go`).
+- **Reviewability Impact**: Cannot review or revert storage persistence independently from RPC event parsing.
+- **Remote / Shared Status**: Published to `origin/develop`.
+
+### Commit `5552a7e3` (`feat(web): connect Freighter wallet, compute SHA-256 profile hash, and enforce status semantics`)
+- **What Changed**: Bundled 5 frontend modules across 4 files:
+  1. Freighter wallet connection integration
+  2. Client-side profile hashing helper (`hashRoutingInfo`)
+  3. Environment configuration loading (`config.ts`)
+  4. Transaction state lifecycle machine
+  5. Complete dashboard escrow deposit form implementation (`page.tsx`).
+- **Reviewability Impact**: Coupled UI presentation with cryptographic hashing and wallet state.
+- **Remote / Shared Status**: Published to `origin/develop`.
+
+### Commit `3d14441e` (`ci: add comprehensive monorepo workflow for develop and main branches and configure dependabot`)
+- **What Changed**: Bundled CI pipeline definitions with automated dependency management configuration:
+  1. Monorepo GitHub Actions workflow (`.github/workflows/ci.yml`) covering 3 distinct projects
+  2. Dependabot configuration (`.github/dependabot.yml`).
+- **Reviewability Impact**: CI changes cannot be modified or reverted without affecting automated dependency updates.
+- **Remote / Shared Status**: Published to `origin/develop`.
+
+### Commit `0a6cfff1` (`docs(system): create architecture, relay, deployment, security, limitations, and cross-repo parity specifications`)
+- **What Changed**: Bundled 6 independent architectural specifications across 6 distinct documents (`docs/architecture.md`, `docs/cross-repo-parity.md`, `docs/deployment.md`, `docs/limitations.md`, `docs/relay.md`, `docs/security-boundaries.md`).
+- **Reviewability Impact**: Reviewers cannot review relay operations separately from deployment topology or cross-repo parity.
+- **Remote / Shared Status**: Published to `origin/develop`.
+
+### Commit `f5a16bc2` (`docs(readme): authenticate claims, update directory paths, security policy, and contributing guide`)
+- **What Changed**: Bundled 4 distinct governance and audit documents across 4 files:
+  1. Main repository documentation (`README.md`)
+  2. Contributor guidelines (`CONTRIBUTING.md`)
+  3. Security disclosure policy (`SECURITY.md`)
+  4. README claim authentication matrix (`AUDIT/readme-claims.md`).
+- **Reviewability Impact**: Combines security reporting policy with general contributor instructions and external audit assertions.
+- **Remote / Shared Status**: Published to `origin/develop`.
+
+---
+
+## 3. History Preservation & Safety Decision
+
+- **Safety Check**: Commits `0590a656`, `7a4cdd15`, `38e72868`, `e30ac116`, `3fba7e77`, `5552a7e3`, `3d14441e`, `0a6cfff1`, and `f5a16bc2` are part of the published default branch history on `origin/develop`.
+- **External Dependencies & Protection**:
+  1. GitHub branch protection on `develop` explicitly enforces `allow_force_pushes: false`.
+  2. 10 open Dependabot pull requests (#3 through #12) target `develop` based on published SHAs.
+  3. Contributor branches and published evidence reference exact commit SHAs.
 - **Destructive Rewrite Risk**: Force-pushing to rewrite published history on `origin/develop` would break downstream contributor forks, invalidate GitHub action run references, and risk repository corruption.
 - **Decision**: **PRESERVE HISTORICAL COMMITS** and enforce strict **SINGLE-FILE ATOMIC COMMITS** for all remediation and ongoing development.
 - **Merge Commit Status**: Confirmed zero merge commits in remediation history (`git rev-list --min-parents=2 HEAD` returns empty).
 
 ---
 
-## 3. Second Deep Remediation Commit Trail (Single File Commits)
+## 4. Second Deep Remediation Commit Trail (Single File Commits)
 
 Every remediation commit executed during this audit was performed strictly on a **single file per commit** basis:
 
