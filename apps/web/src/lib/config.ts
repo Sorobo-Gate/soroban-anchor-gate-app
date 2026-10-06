@@ -1,7 +1,7 @@
 import { StrKey } from "@stellar/stellar-sdk";
 
 export const DEFAULT_TESTNET_CONTRACT_ID =
-  "CD36A2JQEEQSBTKOE6T5PB3BPV7IGIYDSSOBOOK6NE4RSOWGNC2HXXDA";
+  "CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT";
 export const DEFAULT_TESTNET_RPC_URL =
   "https://soroban-testnet.stellar.org";
 export const DEFAULT_TESTNET_PASSPHRASE =
@@ -50,6 +50,15 @@ export function validateRpcUrl(rpcUrl: string | undefined): string {
 }
 
 export function getAppConfig(): AppConfig {
+  if (
+    process.env.NODE_ENV === "production" &&
+    !process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ID
+  ) {
+    throw new Error(
+      "NEXT_PUBLIC_ESCROW_CONTRACT_ID is required in production environment."
+    );
+  }
+
   const rawContractId =
     process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ID || DEFAULT_TESTNET_CONTRACT_ID;
   const contractId = validateContractId(rawContractId);
