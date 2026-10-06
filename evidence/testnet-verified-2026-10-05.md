@@ -1,5 +1,8 @@
 # Stellar Testnet Empirical Verification Report (2026-10-05)
 
+> [!NOTE]
+> **Historical Deployment Record**: This report documents onchain verification for the prior contract deployment (`CD36A2...`, ledger 5036360). For the authoritative redeployment on 2026-10-06 (`CBIHLECK...`), see [`evidence/testnet-verified-2026-10-06.md`](./testnet-verified-2026-10-06.md).
+
 ## Executive Summary
 
 This report documents the empirical onchain verification conducted during the Second Deep Remediation of `Sorobo-Gate/soroban-anchor-gate-app`. Prior claims of Testnet execution were identified as synthetic or simulated (see [`evidence/testnet-2026-10-05.md`](./testnet-2026-10-05.md)). This document provides cryptographic and ledger proof of live Soroban invocation on Stellar Testnet, matching the verified deployment in `Sorobo-Gate/soroban-anchor-gate-contract`.
