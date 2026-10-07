@@ -97,12 +97,13 @@ go build ./cmd/relay/main.go
 |---|---|---|
 | **Soroban Escrow SDK** | `VERIFIED` | 13/13 unit tests passing, full contract signature parity |
 | **Escrow Creation Onchain** | `VERIFIED ONCHAIN` | Tested on Testnet (`CBIHLECK...`, Tx `e0b57482...`) |
-| **Freighter Wallet Boundary** | `UNVERIFIED` | Browser extension boundary requires interactive physical browser; simulation prohibited |
+| **Freighter Wallet Boundary** | `VERIFIED ONCHAIN` | Live browser testnet transaction confirmed on ledger 5069983 (`2392ac9b...`) |
 | **Go Event Poller & Decoder** | `TESTED LOCALLY` | 11/11 tests passing with `-race`, real XDR event decoding |
 | **Durable Store & Idempotency** | `TESTED LOCALLY` | 4/4 tests passing with `-race`, crash recovery and explicit states |
 | **SEP-10 / SEP-31 Integration** | `KNOWN LIMITATION` | Requires active anchor partner endpoint |
 
 For detailed audit logs and verification records, see:
+- [`evidence/testnet-verified-2026-10-07.md`](evidence/testnet-verified-2026-10-07.md)
 - [`evidence/testnet-verified-2026-10-06.md`](evidence/testnet-verified-2026-10-06.md)
 - [`evidence/testnet-verified-2026-10-05.md`](evidence/testnet-verified-2026-10-05.md)
 - [`evidence/index.md`](evidence/index.md)
