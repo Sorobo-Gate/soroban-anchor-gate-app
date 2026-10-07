@@ -16,14 +16,15 @@ This document maps all protocol claims and features to their empirical source co
 | **i128 Event Payout Decoding** | `TESTED LOCALLY` | [`services/relay/internal/listener/subscriber.go`](../services/relay/internal/listener/subscriber.go) | `subscriber_test.go` (`*big.Int`) | Go test suite |
 | **Durable Store & Idempotency** | `TESTED LOCALLY` | [`services/relay/internal/store/idempotency.go`](../services/relay/internal/store/idempotency.go) | `idempotency_test.go` (4/4 passed) | Go test suite |
 | **Monorepo CI Workflows** | `VERIFIED` | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | GitHub Actions CI (Passing) | CI workflow definitions |
-| **Non-Custodial Freighter Extension Boundary** | `UNVERIFIED` | [`apps/web/src/app/page.tsx`](../apps/web/src/app/page.tsx) | Typecheck & Build Clean | Requires interactive physical browser with extension |
+| **Non-Custodial Freighter Extension Boundary** | `VERIFIED ONCHAIN` | [`apps/web/src/app/page.tsx`](../apps/web/src/app/page.tsx) | Live Browser Testnet Execution (Ledger 5069983) | [`evidence/testnet-verified-2026-10-07.md`](./testnet-verified-2026-10-07.md) |
 | **SEP-10 / SEP-31 Off-Ramp Gateway** | `KNOWN LIMITATION` | N/A | N/A | Documented limitation |
 
 ---
 
 ## Historical & Verification Records
 
-- [`evidence/testnet-verified-2026-10-06.md`](./testnet-verified-2026-10-06.md): Authoritative empirical Testnet report for redeployed contract `CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT`.
+- [`evidence/testnet-verified-2026-10-07.md`](./testnet-verified-2026-10-07.md): Authoritative live Freighter browser wallet verification (Tx `2392ac9b...` on ledger `5069983`).
+- [`evidence/testnet-verified-2026-10-06.md`](./testnet-verified-2026-10-06.md): Empirical Testnet report for redeployed contract `CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT`.
 - [`evidence/testnet-verified-2026-10-05.md`](./testnet-verified-2026-10-05.md): Historical verification record for prior deployment `CD36A2...` (ledger `5036360`).
 - [`evidence/testnet-2026-10-05.md`](./testnet-2026-10-05.md): Historical report reclassified as **INVALID EVIDENCE / AUDIT NOTICE** due to synthetic addresses and empty string hash.
 
