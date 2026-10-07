@@ -38,10 +38,10 @@ Built with **Next.js 16**, **React 19**, and **Tailwind CSS**.
 - **Contract Parity Lifecycle**: Displays `Funded → Disbursed → Refunded` matching authoritative Soroban contract states.
 
 ### 🚀 Getting Started
-Prerequisites: Node.js >=20.18.0 (aligned with `@stellar/stellar-sdk`).
+Prerequisites: Node.js >=22.12.0 (aligned with `engines` requirement and `@stellar/stellar-sdk` runtime requirements).
 ```bash
 cd apps/web
-npm install
+npm ci
 npm run typecheck
 npm run test
 npm run build
@@ -58,7 +58,7 @@ Narrowly scoped SDK for interacting with the `SorobanAnchor Gate` contract.
 - **Invocation Builders**: Build parameter XDR arrays for `init(admin, treasury, fee_bps)`, `create_escrow`, `release_to_anchor`, and `refund`.
 - **Validation Helpers**: Validate Ed25519 public keys, contract addresses, and 32-byte hex profile hashes.
 - **Integer-Safe Math**: `parseTokenAmount` and `formatTokenAmount` helpers avoiding JS floating-point rounding errors.
-- **Zero CVE Dependencies**: Upgraded to `@stellar/stellar-sdk@17.2.0`.
+- **Stellar SDK Dependency**: Configured with `@stellar/stellar-sdk@^17.2.0` (while `apps/web` uses `@stellar/stellar-sdk@^17.2.1`).
 
 ### 🧪 Running Tests & Build
 ```bash
@@ -96,11 +96,11 @@ go build ./cmd/relay/main.go
 | Surface / Feature | Implementation Status | Verification Details |
 |---|---|---|
 | **Soroban Escrow SDK** | `VERIFIED` | 13/13 unit tests passing, full contract signature parity |
-| **Escrow Creation Onchain** | `VERIFIED ONCHAIN` | Tested on Testnet (`CBIHLECK...`, Tx `e0b57482...`) |
+| **Escrow Creation Onchain** | `VERIFIED ONCHAIN` | Tested on Testnet (`CBIHLECK...`, Tx `e0b57482...`, Tx `2392ac9b...`) |
 | **Freighter Wallet Boundary** | `VERIFIED ONCHAIN` | Live browser testnet transaction confirmed on ledger 5069983 (`2392ac9b...`) |
 | **Go Event Poller & Decoder** | `TESTED LOCALLY` | 11/11 tests passing with `-race`, real XDR event decoding |
 | **Durable Store & Idempotency** | `TESTED LOCALLY` | 4/4 tests passing with `-race`, crash recovery and explicit states |
-| **SEP-10 / SEP-31 Integration** | `KNOWN LIMITATION` | Requires active anchor partner endpoint |
+| **SEP-10 / SEP-31 Integration** | `KNOWN LIMITATION` | Requires active anchor partner endpoint (tracked in open Issue #1) |
 
 For detailed audit logs and verification records, see:
 - [`evidence/testnet-verified-2026-10-07.md`](evidence/testnet-verified-2026-10-07.md)
