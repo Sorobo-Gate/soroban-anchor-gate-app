@@ -1,0 +1,21 @@
+{
+  "name": "@soroban-anchor-gate/contract-client",
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "node node_modules/typescript/lib/tsc.js",
+    "typecheck": "node node_modules/typescript/lib/tsc.js --noEmit",
+    "test": "node node_modules/typescript/lib/tsc.js && node --test dist/index.test.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^17.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

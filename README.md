@@ -1,259 +1,122 @@
+# SorobanAnchor Gate App Monorepo
 
-# SorobanAnchor Gate
-
-> Programmable Soroban-to-SEP Gateway & Automated Compliance Escrow
-
+[![App & Services CI](https://github.com/Sorobo-Gate/soroban-anchor-gate-app/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/Sorobo-Gate/soroban-anchor-gate-app/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Soroban](https://img.shields.io/badge/Soroban-v22.0.0-purple.svg)](https://soroban.stellar.org/)
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://go.dev/)
-[![Next.js](https://img.shields.io/badge/Next.js-14+-black.svg)](https://nextjs.org/)
 
-SorobanAnchor Gate is an open-source middleware protocol bridging smart contracts on Stellar (**Soroban**) with Stellar's regulated banking off-ramps (**Stellar Ecosystem Proposals / SEPs**). It enables decentralized protocols, DAOs, and escrow applications to disburse funds directly into real-world bank accounts and mobile money wallets without manual intervention or centralized custodial custody.
+**SorobanAnchor Gate** is an open-source Stellar application monorepo that connects Soroban smart contract milestone escrows with off-chain Stellar anchor banking gateways.
 
----
-
-## Table of Contents
-
-- [Architecture Overview](#architecture-overview)
-- [Core Components](#core-components)
-- [Repository Structure](#repository-structure)
-- [Supported Stellar Standards](#supported-stellar-standards)
-- [Prerequisites](#prerequisites)
-- [Quickstart Guide](#quickstart-guide)
-  - [1. Clone the Repository](#1-clone-the-repository)
-  - [2. Smart Contract Build and Test](#2-smart-contract-build-and-test)
-  - [3. Run the Go Relayer Engine](#3-run-the-go-relayer-engine)
-  - [4. Run the Frontend Dashboard](#4-run-the-frontend-dashboard)
-- [Contributing](#contributing)
-- [License](#license)
+Related Smart Contract Repository: [`Sorobo-Gate/soroban-anchor-gate-contract`](https://github.com/Sorobo-Gate/soroban-anchor-gate-contract)
 
 ---
 
-## Architecture Overview
+## 🏗️ Repository Architecture
 
-```text
-               +-------------------------------------------+
-               |         Next.js / React Frontend          |
-               | (Freighter Kit, KYC Upload, Live Tracker) |
-               +---------------------+---------------------+
-                                     |
-              +----------------------+----------------------+
-              |                                             |
-              v                                             v
-+-------------------------------+             +-------------------------------+
-|     Soroban Smart Contract    |             |      Go Relayer & Gateway     |
-|   (ConditionalEscrow.wasm)    |             |       (anchor-gate-relay)     |
-+---------------+---------------+             +---------------+---------------+
-                |                                             |
-                | Emits Event:                                | Pulls Event via RPC,
-                | DisbursementAuthorized                      | Signs SEP-10 Auth Challenge
-                v                                             v
-+-----------------------------------------------------------------------------+
-|                               Stellar Network                               |
-|                  (Horizon, Soroban RPC, SAC USDC/EURC)                      |
-+-----------------------------------------------------------------------------+
-                                                              |
-                                                              | Executes SEP-12 / SEP-31
-                                                              v
-                                              +-------------------------------+
-                                              |        Stellar Anchors        |
-                                              |   (Bank Transfer, Mobile Money)|
-                                              +-------------------------------+
+This repository is structured as a clean monorepo containing three core packages:
+
 ```
-
-The system operates across three core decoupled layers:
-
-### Smart Contracts (`/contracts`)
-
-A Soroban smart contract suite written in Rust managing milestone-based escrow locks for Stellar Asset Contract (SAC) tokens.
-
-### Backend Relayer (`/backend`)
-
-A Go service that monitors Soroban RPC event streams, signs SEP-10 cryptographic challenges, submits SEP-12 customer profiles, and executes automated SEP-31/SEP-6 off-ramp disbursements.
-
-### Frontend Application (`/frontend`)
-
-A Next.js dashboard supporting wallet connections (Freighter/Stellar Wallet Kit), anchor discovery via `stellar.toml`, and real-time escrow tracking.
-
----
-
-## Repository Structure
-
-```text
-soroban-anchor-gate/
-├── contracts/                  # Soroban smart contracts (Rust)
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs              # Contract entrypoint & interface
-│       ├── storage.rs          # Ledger state definitions
-│       └── test.rs             # Unit & integration tests
-├── backend/                    # Anchor relay daemon & API (Go)
-│   ├── go.mod
-│   ├── go.sum
-│   ├── cmd/
-│   │   └── relay/
-│   │       └── main.go         # Worker entrypoint
-│   └── internal/
-│       ├── listener/           # Soroban RPC event listener
-│       ├── sephandler/         # SEP-10, SEP-12, SEP-31 clients
-│       └── store/              # Event idempotency store
-├── frontend/                   # Next.js web application
-│   ├── package.json
-│   ├── src/
-│   │   ├── app/                # App router pages
-│   │   ├── components/         # UI components & Wallet modal
-│   │   └── lib/                # Stellar SDK & Anchor utilities
-│   └── tailwind.config.ts
-├── .github/                    # CI/CD and Issue workflows
-│   └── workflows/
-│       └── ci.yml
-├── CONTRIBUTING.md             # Contribution guidelines
-├── LICENSE                     # Apache 2.0 License
-└── README.md
+soroban-anchor-gate-app/
+├── apps/
+│   └── web/                   # Next.js 16 web dashboard & Freighter wallet console
+├── packages/
+│   └── contract-client/       # TypeScript SDK with integer-safe math & contract encoders
+└── services/
+    └── relay/                 # Go background daemon polling Soroban RPC for events
 ```
 
 ---
 
-## Supported Stellar Standards
+## 💻 1. Frontend Web Dashboard (`apps/web`)
 
-| Standard | Description |
-|---|---|
-| SEP-1 | Stellar Info File (`stellar.toml` discovery) |
-| SEP-10 | Stellar Web Authentication |
-| SEP-12 | KYC API Integration |
-| SEP-31 | Cross-Border Payout API |
-| SEP-38 | Anchor RFQ / Quotes API |
-| CAP-46-06 / Soroban | Smart Contract Execution Environment |
+Built with **Next.js 16**, **React 19**, and **Tailwind CSS**.
 
----
+### ✨ Features
+- **Freighter Wallet Integration**: Connect wallet, verify network passphrase, and sign transactions via `@stellar/freighter-api`.
+- **Authoritative Soroban RPC Pipeline**: Real simulation (`simulateTransaction`), transaction assembly (`assembleTransaction`), wallet signing, and polling (`getTransaction`). Zero mocked `setTimeout` confirmations.
+- **SHA-256 Profile Hashing**: Hashes banking routing info into a 32-byte `profile_hash` commitment on client. Raw PII is never stored onchain.
+- **Integer-Safe Token Math**: Convert token amounts to 7-decimal integer base units using `bigint`.
+- **Precise Status Semantics**: Status progression: `idle` → `wallet-required` → `preparing` → `simulating` → `awaiting-signature` → `submitting` → `pending` → `confirmed` / `failed`.
+- **Contract Parity Lifecycle**: Displays `Funded → Disbursed → Refunded` matching authoritative Soroban contract states.
 
-## Prerequisites
-
-Ensure you have the following installed locally.
-
-### Rust
-
-Rust v1.74+ with the `wasm32-unknown-unknown` target:
-
+### 🚀 Getting Started
+Prerequisites: Node.js >=22.12.0 (aligned with `engines` requirement and `@stellar/stellar-sdk` runtime requirements).
 ```bash
-rustup target add wasm32-unknown-unknown
-```
-
-### Stellar CLI
-
-```bash
-cargo install --locked stellar-cli --features opt
-```
-
-### Go
-
-Go v1.22 or later.
-
-### Node.js
-
-Node.js v18 or later with npm or pnpm.
-
-### Docker
-
-Optional, for a local Soroban/PostgreSQL sandbox.
-
----
-
-## Quickstart Guide
-
-### 1. Clone the Repository
-
-Replace `<your-org-or-username>` with the actual GitHub organization or username.
-
-```bash
-git clone https://github.com/<your-org-or-username>/soroban-anchor-gate.git
-cd soroban-anchor-gate
-```
-
-### 2. Smart Contract Build and Test
-
-Navigate to the contracts directory:
-
-```bash
-cd contracts
-```
-
-Run the contract tests:
-
-```bash
-cargo test
-```
-
-Build the contract for WebAssembly:
-
-```bash
-cargo build --target wasm32-unknown-unknown --release
-```
-
-### 3. Run the Go Relayer Engine
-
-Navigate to the backend directory:
-
-```bash
-cd ../backend
-```
-
-Configure environment variables:
-
-```bash
-cp .env.example .env
-```
-
-Populate `.env` with your Stellar Testnet configuration:
-
-```env
-STELLAR_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
-SOROBAN_RPC_URL="https://soroban-testnet.stellar.org"
-RELAY_SECRET_KEY="S..."
-TARGET_ANCHOR_DOMAIN="testanchor.stellar.org"
-DATABASE_URL="postgres://user:pass@localhost:5432/anchorgate?sslmode=disable"
-```
-
-**Security Notice:** Never commit your `.env` file, private keys, or other secrets to version control. Use a dedicated test account for development.
-
-Start the relayer service:
-
-```bash
-go run cmd/relay/main.go
-```
-
-### 4. Run the Frontend Dashboard
-
-Open a new terminal and navigate to the frontend directory:
-
-```bash
-cd frontend
-```
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Start the development server:
-
-```bash
+cd apps/web
+npm ci
+npm run typecheck
+npm run test
+npm run build
 npm run dev
 ```
 
-Open the local development URL displayed by Next.js in your terminal.
+---
+
+## 📦 2. TypeScript Contract Client SDK (`packages/contract-client`)
+
+Narrowly scoped SDK for interacting with the `SorobanAnchor Gate` contract.
+
+### ✨ Features
+- **Invocation Builders**: Build parameter XDR arrays for `init(admin, treasury, fee_bps)`, `create_escrow`, `release_to_anchor`, and `refund`.
+- **Validation Helpers**: Validate Ed25519 public keys, contract addresses, and 32-byte hex profile hashes.
+- **Integer-Safe Math**: `parseTokenAmount` and `formatTokenAmount` helpers avoiding JS floating-point rounding errors.
+- **Stellar SDK Dependency**: Configured with `@stellar/stellar-sdk@^17.2.0` (while `apps/web` uses `@stellar/stellar-sdk@^17.2.1`).
+
+### 🧪 Running Tests & Build
+```bash
+cd packages/contract-client
+npm install
+npm run typecheck
+npm run test
+npm run build
+```
 
 ---
 
-## Contributing
+## ⚙️ 3. Go Relay Daemon (`services/relay`)
 
-We welcome community contributions.
+Background service written in **Go 1.22+** that monitors Soroban RPC for contract events.
 
-Please review [CONTRIBUTING.md](CONTRIBUTING.md) for details on our coding standards, branch conventions, and testing requirements before opening a Pull Request.
+### ✨ Features
+- **Soroban Event Listener**: Periodically queries `getEvents` on Soroban RPC for `disbursed` events.
+- **Full Domain Numeric Precision**: Decodes token payout amounts into `math/big.Int` without integer truncation.
+- **Durable File-Backed Store**: Thread-safe file store (`DurableFileStore`) with crash recovery, tracking event state lifecycle (`observed` → `claimed` → `processing` → `completed` / `failed`).
+- **Ledger Cursor Tracking**: Persists and advances ledger sequence cursor across polling windows.
+
+### 🧪 Running Tests & Build
+```bash
+cd services/relay
+go vet ./...
+go test -v -race ./...
+go build ./cmd/relay/main.go
+```
 
 ---
 
-## License
+## 📑 Implementation & Audit Status Summary
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+| Surface / Feature | Implementation Status | Verification Details |
+|---|---|---|
+| **Soroban Escrow SDK** | `VERIFIED` | 13/13 unit tests passing, full contract signature parity |
+| **Escrow Creation Onchain** | `VERIFIED ONCHAIN` | Tested on Testnet (`CBIHLECK...`, Tx `e0b57482...`, Tx `2392ac9b...`) |
+| **Freighter Wallet Boundary** | `VERIFIED ONCHAIN` | Live browser testnet transaction confirmed on ledger 5069983 (`2392ac9b...`) |
+| **Go Event Poller & Decoder** | `TESTED LOCALLY` | 11/11 tests passing with `-race`, real XDR event decoding |
+| **Durable Store & Idempotency** | `TESTED LOCALLY` | 4/4 tests passing with `-race`, crash recovery and explicit states |
+| **SEP-10 / SEP-31 Integration** | `KNOWN LIMITATION` | Requires active anchor partner endpoint (tracked in open Issue #1) |
+
+For detailed audit logs and verification records, see:
+- [`evidence/testnet-verified-2026-10-07.md`](evidence/testnet-verified-2026-10-07.md)
+- [`evidence/testnet-verified-2026-10-06.md`](evidence/testnet-verified-2026-10-06.md)
+- [`evidence/testnet-verified-2026-10-05.md`](evidence/testnet-verified-2026-10-05.md)
+- [`evidence/index.md`](evidence/index.md)
+- [`AUDIT/branch-state.md`](AUDIT/branch-state.md)
+- [`AUDIT/git-history-remediation.md`](AUDIT/git-history-remediation.md)
+- [`AUDIT/readme-claims.md`](AUDIT/readme-claims.md)
+- [`docs/contract-parity.md`](docs/contract-parity.md)
+- [`docs/cross-repo-parity.md`](docs/cross-repo-parity.md)
+- [`SECURITY.md`](SECURITY.md)
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+
+---
+
+## 📄 License
+
+Licensed under the [Apache License 2.0](LICENSE).

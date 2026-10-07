@@ -1,0 +1,113 @@
+name: App & Services CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  go-relay-checks:
+    name: Go Relay Service Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.22'
+          cache-dependency-path: services/relay/go.sum
+
+      - name: Verify Go Formatting
+        run: |
+          cd services/relay
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files are not formatted with gofmt:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Run Go Vet
+        run: |
+          cd services/relay
+          go vet ./...
+
+      - name: Run Go Tests & Race Detector
+        run: |
+          cd services/relay
+          go test -v -race ./...
+
+      - name: Build Relay Daemon Executable
+        run: |
+          cd services/relay
+          go build ./cmd/relay/main.go
+
+  contract-client-checks:
+    name: TypeScript Contract Client SDK Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install SDK Dependencies
+        run: |
+          cd packages/contract-client
+          npm ci
+
+      - name: Run SDK Typecheck
+        run: |
+          cd packages/contract-client
+          npm run typecheck
+
+      - name: Run SDK Unit Tests
+        run: |
+          cd packages/contract-client
+          npm run test
+
+      - name: Build SDK
+        run: |
+          cd packages/contract-client
+          npm run build
+
+  web-frontend-checks:
+    name: Next.js Web Frontend Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install Web Dependencies
+        run: |
+          cd apps/web
+          npm ci
+
+      - name: Run ESLint Verification
+        run: |
+          cd apps/web
+          npm run lint
+
+      - name: Run TypeScript Typecheck
+        run: |
+          cd apps/web
+          npm run typecheck
+
+      - name: Run Web Unit Tests
+        run: |
+          cd apps/web
+          npm run test
+
+      - name: Production Next.js Build
+        env:
+          NEXT_PUBLIC_ESCROW_CONTRACT_ID: CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT
+        run: |
+          cd apps/web
+          npm run build

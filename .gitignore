@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+dist/
+.next/
+out/
+
+# Go build artifacts
+services/relay/main
+services/relay/relay
+*.exe
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
