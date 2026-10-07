@@ -3,46 +3,57 @@
 ## Current Observed Branch Topology
 
 ```
-* 8239442 (HEAD -> develop, origin/develop, origin/HEAD) docs(readme): update testnet evidence references for contract CBIHLECK
-* 6fb5fe9 docs(evidence): annotate testnet-verified-2026-10-05 report as historical CD36A2 deployment
-* 4af324a docs(evidence): update verification index with 2026-10-06 report reference
-* 8137cf2 docs(evidence): document verified testnet evidence for contract CBIHLECK
-* 0b6ae60 docs(audit): document subsequent commit batching analysis and safety constraints
-* f01da21 docs(audit): update deployed contract claim to CBIHLECK
-* e700072 docs(parity): update contract address to CBIHLECK in parity matrix
-* 6f92b1b docs(relay): update contract ID to CBIHLECK in relay documentation
-* 0234d08 docs(deployment): update deployment coordinates for contract CBIHLECK
-* 69ec200 test(relay): align subscriber tests with contract CBIHLECK
-* 95c9574 feat(relay): update default contract ID to CBIHLECK in daemon
-* 1888c3e test(web): align transaction tests with contract CBIHLECK
-* 314f07e test(web): verify production configuration enforcement
-* 0b2d7a4 feat(web): update default contract ID to CBIHLECK and enforce in production
-* 7464d76 test(sdk): update test contract ID to verified deployment CBIHLECK
-* 02c2b06 build(web): update lockfile for source-map-js 1.2.2
-* 84d6768 fix(deps): bump source-map-js to 1.2.2 in web dependencies
-* 1daea66 ci: remove invalid gofmt ecosystem from dependabot config
-... [40+ single-file atomic remediation commits]
-* 745d95e build(sdk): add lockfile for contract client package
-... [historical commits]
+* a88048a (HEAD -> develop, origin/develop, origin/HEAD) docs(audit): upgrade Freighter boundary claims to verified onchain
+* 86ca229 docs(evidence): record verified Freighter Testnet transaction
+* 2e6ef3d Merge pull request #10 from Sorobo-Gate/dependabot/npm_and_yarn/apps/web/eslint-config-next-16.3.8
+* 1b9d6d5 Merge pull request #8 from Sorobo-Gate/dependabot/npm_and_yarn/apps/web/types/node-26.6.4
+* f938ae1 Merge pull request #6 from Sorobo-Gate/dependabot/npm_and_yarn/apps/web/stellar/stellar-sdk-17.2.1
+* 8f559f6 build(deps): bump actions/setup-node from 4 to 7 (#5)
+* 57baaac build(deps): bump actions/checkout from 4 to 7 (#4)
+* f835541 build(deps): bump actions/setup-go from 5 to 7 (#3)
+* db55649 docs(web): add environment template with contract CBIHLECK
+* 9cc9bf3 build(web): allow tracking of .env.example template
+* f6b85f7 ci(web): configure explicit contract ID for production build step
+* fead70b docs(audit): update branch state audit with current develop commits
+* 8239442 docs(readme): update testnet evidence references for contract CBIHLECK
+... [70+ atomic commits documenting SDK parity, XDR decoding, durable file store, and CI fixes]
 * a93c145 (origin/main) Create CONTRIBUTING.md
 * 52bc731 Update README.md
 * 65d02ce Initial commit
 ```
 
-## Branch Strategy Analysis
+## Branch Strategy & Metrics Analysis
 
 - **Default Remote Branch**: `develop` (`origin/HEAD` points to `origin/develop`).
-- **Active Feature/Integration Branch**: `develop` is currently 54 commits ahead of `origin/main`.
-- **Main Branch**: `main` remains pinned at initial setup (`a93c145`).
-- **Merge Commits**: Exactly 0 merge commits across the entire branch history (`git rev-list --min-parents=2 HEAD` returns empty).
-- **Linearity**: The branch history is strictly linear.
+- **Current develop HEAD**: `a88048ad86caa97e08c526b9f018309a0130da60`.
+- **Relationship Between develop and main**: `develop` is currently **91 commits ahead** of `origin/main` (`a93c145`).
+- **Main Branch**: `main` remains pinned at initial setup (`a93c145`) awaiting formal release promotion.
+- **Continuous Integration (CI)**: **100% Green / Passing** across all three jobs:
+  - `Go Relay Service Checks`
+  - `TypeScript Contract Client SDK Checks`
+  - `Next.js Web Frontend Checks`
+- **Open Pull Requests**: **0 open PRs**.
+- **Issue Tracking**:
+  - **Issue #2** (`feat(web): build interactive escrow creation form with Freighter connect`): **Closed** (fully implemented, simulated, and verified onchain).
+  - **Issue #1** (`feat(relay): implement SEP-10 challenge signer client`): **Open** (preserved honestly as planned future roadmap / known limitation).
+- **GitHub Release Status**: **0 published releases** in `apps` repository (ready for `v0.1.0` promotion).
 
-## Relationship Between `develop` and `main`
+---
 
-`develop` contains the active monorepo structure (`apps/web`, `packages/contract-client`, `services/relay`). `main` represents the stable release target, while `develop` serves as the primary integration and development branch.
+## Onchain Verification Baseline
 
-## Action Plan & Governance
+- **Verified Contract ID**: `CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT` (matching `soroban-anchor-gate-contract` release `v0.1.1`).
+- **Interactive Browser Wallet Verification**:
+  - **Provider**: Freighter Browser Extension (`@stellar/freighter-api@6.0.1`).
+  - **Transaction Hash**: [`2392ac9b4de86ac22c6d3b5d10fe12c387e8c9a7ea04217763a2defcf0015e42`](https://stellar.expert/explorer/testnet/tx/2392ac9b4de86ac22c6d3b5d10fe12c387e8c9a7ea04217763a2defcf0015e42).
+  - **Ledger Sequence**: `5069983`.
+  - **Signer Public Key**: `GCHIAK3LLDWJ5N4Z4TH6GHCH2LQX5SUL2WEU42I324CFXGDUWXMNNSDZ`.
+  - **Contract Function**: `create_escrow` (Escrow #3 created with 32-byte SHA-256 profile commitment).
+  - **Final RPC Status**: `SUCCESS`.
+  - **Evidence File**: [`evidence/testnet-verified-2026-10-07.md`](../evidence/testnet-verified-2026-10-07.md).
 
-1. **Keep `develop` as Primary Development Target**: All ongoing feature development, fixes, single-file remediation commits, and tests target `develop`.
-2. **CI Triggers**: GitHub Actions workflows in `.github/workflows/ci.yml` target both `develop` and `main`, running the Go Relay, TypeScript SDK, and Next.js Web Frontend test suites on pushes and PRs.
-3. **Release Promotion to `main`**: With full contract parity, zero test failures, real Testnet validation on ledger `5036360`, and clean CI checks, promotion from `develop` to `main` can proceed via fast-forward or squash-free linear PR when authorized for release `v0.1.0`.
+---
+
+## Release Readiness State
+
+The application repository has passed all implementation, contract parity, test coverage, and live onchain verification milestones. It is **READY FOR MAIN PROMOTION** and tagging of the initial `v0.1.0` release. SEP-10 programmatic challenge authentication remains tracked in Issue #1 as a known future integration item.
