@@ -2,25 +2,27 @@
 
 **Audit Date:** 2026-10-09
 **Repository:** `Sorobo-Gate/soroban-anchor-gate-app`
-**Current HEAD:** `8a8394a7de8916b5a6249b1e9ed536e2617c299e` on branch `develop`
+**Audit Baseline Commit:** `8a8394a7de8916b5a6249b1e9ed536e2617c299e`
 **Default Branch (Remote):** `develop`
-**Release Branch:** `main` (at `8a8394a7de8916b5a6249b1e9ed536e2617c299e`)
+**Release Branch:** `main`
 **Public Release Tag:** `v0.1.0` (commit `8a8394a7de8916b5a6249b1e9ed536e2617c299e`, release `v0.1.0`)
+
+> **Snapshot Stability Note**: This SHA records the repository state observed immediately before this audit refresh. Because updating this document creates a new documentation commit, the live branch HEAD may advance while the verified branch relationship remains unchanged. Final branch alignment must be verified from the live GitHub branch state rather than by treating this document's recorded SHA as a permanent HEAD value.
 
 ---
 
-## 1. Observed Branch Condition & Alignment
+## 1. Observed Branch Condition & Alignment (Audit Snapshot)
 
-Inspection via Git CLI and GitHub API confirms the following branch topology:
+Inspection via Git CLI and GitHub API at audit baseline confirms the following branch topology:
 
-- **Branch Alignment**: `main` and `develop` are **identical** (`8a8394a7de8916b5a6249b1e9ed536e2617c299e`). `develop` is 0 commits ahead and 0 commits behind `origin/main`.
+- **Branch Alignment**: At the audit baseline, `main` and `develop` were identical (`8a8394a7de8916b5a6249b1e9ed536e2617c299e`). Final branch alignment must be verified from the live GitHub branch state rather than by treating this document's recorded SHA as a permanent HEAD value.
 - **Default Remote Branch**: `develop` (`origin/HEAD` points to `origin/develop`).
-- **Release Promotion**: Release promotion to `main` is complete. Both branches point to the same verified release commit.
+- **Release Promotion**: Release promotion to `main` is complete. Both branches point to the verified release baseline.
 - **Branch Protection & Enforcement**:
   - **Status**: **Active & Verified on both `main` and `develop`**.
   - **develop Rules**: Required status checks (`Go Relay Service Checks`, `TypeScript Contract Client SDK Checks`, `Next.js Web Frontend Checks`); minimum 1 approving review required; stale reviews dismissed on new push; force pushes disabled; branch deletions disabled; administrative override permitted for maintainer emergency maintenance (`enforce_admins: false`).
   - **main Rules**: Protected release branch; force pushes disabled; branch deletions disabled (`enforce_admins: false`).
-- **Continuous Integration (CI)**: **Passing** across all workflows on both `main` and `develop`:
+- **Continuous Integration (CI)**: At the time of this audit, passing across all workflows on both `main` and `develop`:
   - `Go Relay Service Checks`
   - `TypeScript Contract Client SDK Checks`
   - `Next.js Web Frontend Checks`
@@ -51,7 +53,7 @@ Inspection via Git CLI and GitHub API confirms the following branch topology:
 
 ## 3. Release & Branch Lifecycle Summary
 
-Release promotion is complete. The application repository and companion services are fully aligned between `develop` and `main` at `v0.1.0`. All required CI checks on `main` pass. SEP-10 programmatic challenge authentication remains tracked in Issue #1 as legitimate future integration work. The app is not waiting for release; release promotion is finished and verified.
+At the time of this audit, release promotion is complete. The application repository and companion services are fully aligned between `develop` and `main` at `v0.1.0`. All required CI checks on `main` pass. SEP-10 programmatic challenge authentication remains tracked in Issue #1 as legitimate future integration work. The app is not waiting for release; release promotion is finished and verified. Current branch state and future commits should be verified directly on GitHub.
 
 ---
 
