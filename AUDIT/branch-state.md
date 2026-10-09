@@ -1,46 +1,41 @@
 # Branch State & Workflow Strategy Audit
 
-## Current Observed Branch Topology
-
-```
-* a88048a (HEAD -> develop, origin/develop, origin/HEAD) docs(audit): upgrade Freighter boundary claims to verified onchain
-* 86ca229 docs(evidence): record verified Freighter Testnet transaction
-* 2e6ef3d Merge pull request #10 from Sorobo-Gate/dependabot/npm_and_yarn/apps/web/eslint-config-next-16.3.8
-* 1b9d6d5 Merge pull request #8 from Sorobo-Gate/dependabot/npm_and_yarn/apps/web/types/node-26.6.4
-* f938ae1 Merge pull request #6 from Sorobo-Gate/dependabot/npm_and_yarn/apps/web/stellar/stellar-sdk-17.2.1
-* 8f559f6 build(deps): bump actions/setup-node from 4 to 7 (#5)
-* 57baaac build(deps): bump actions/checkout from 4 to 7 (#4)
-* f835541 build(deps): bump actions/setup-go from 5 to 7 (#3)
-* db55649 docs(web): add environment template with contract CBIHLECK
-* 9cc9bf3 build(web): allow tracking of .env.example template
-* f6b85f7 ci(web): configure explicit contract ID for production build step
-* fead70b docs(audit): update branch state audit with current develop commits
-* 8239442 docs(readme): update testnet evidence references for contract CBIHLECK
-... [70+ atomic commits documenting SDK parity, XDR decoding, durable file store, and CI fixes]
-* a93c145 (origin/main) Create CONTRIBUTING.md
-* 52bc731 Update README.md
-* 65d02ce Initial commit
-```
-
-## Branch Strategy & Metrics Analysis
-
-- **Default Remote Branch**: `develop` (`origin/HEAD` points to `origin/develop`).
-- **Current develop HEAD**: `a88048ad86caa97e08c526b9f018309a0130da60`.
-- **Relationship Between develop and main**: `develop` is currently **91 commits ahead** of `origin/main` (`a93c145`).
-- **Main Branch**: `main` remains pinned at initial setup (`a93c145`) awaiting formal release promotion.
-- **Continuous Integration (CI)**: **100% Green / Passing** across all three jobs:
-  - `Go Relay Service Checks`
-  - `TypeScript Contract Client SDK Checks`
-  - `Next.js Web Frontend Checks`
-- **Open Pull Requests**: **0 open PRs**.
-- **Issue Tracking**:
-  - **Issue #2** (`feat(web): build interactive escrow creation form with Freighter connect`): **Closed** (fully implemented, simulated, and verified onchain).
-  - **Issue #1** (`feat(relay): implement SEP-10 challenge signer client`): **Open** (preserved honestly as planned future roadmap / known limitation).
-- **GitHub Release Status**: **0 published releases** in `apps` repository (ready for `v0.1.0` promotion).
+**Audit Date:** 2026-10-09
+**Repository:** `Sorobo-Gate/soroban-anchor-gate-app`
+**Current HEAD:** `8a8394a7de8916b5a6249b1e9ed536e2617c299e` on branch `develop`
+**Default Branch (Remote):** `develop`
+**Release Branch:** `main` (at `8a8394a7de8916b5a6249b1e9ed536e2617c299e`)
+**Public Release Tag:** `v0.1.0` (commit `8a8394a7de8916b5a6249b1e9ed536e2617c299e`, release `v0.1.0`)
 
 ---
 
-## Onchain Verification Baseline
+## 1. Observed Branch Condition & Alignment
+
+Inspection via Git CLI and GitHub API confirms the following branch topology:
+
+- **Branch Alignment**: `main` and `develop` are **identical** (`8a8394a7de8916b5a6249b1e9ed536e2617c299e`). `develop` is 0 commits ahead and 0 commits behind `origin/main`.
+- **Default Remote Branch**: `develop` (`origin/HEAD` points to `origin/develop`).
+- **Release Promotion**: Release promotion to `main` is complete. Both branches point to the same verified release commit.
+- **Branch Protection & Enforcement**:
+  - **Status**: **Active & Verified on both `main` and `develop`**.
+  - **develop Rules**: Required status checks (`Go Relay Service Checks`, `TypeScript Contract Client SDK Checks`, `Next.js Web Frontend Checks`); minimum 1 approving review required; stale reviews dismissed on new push; force pushes disabled; branch deletions disabled; administrative override permitted for maintainer emergency maintenance (`enforce_admins: false`).
+  - **main Rules**: Protected release branch; force pushes disabled; branch deletions disabled (`enforce_admins: false`).
+- **Continuous Integration (CI)**: **Passing** across all workflows on both `main` and `develop`:
+  - `Go Relay Service Checks`
+  - `TypeScript Contract Client SDK Checks`
+  - `Next.js Web Frontend Checks`
+  - Latest App & Services CI on `main` passes.
+- **GitHub Release Status**: Release [`v0.1.0`](https://github.com/Sorobo-Gate/soroban-anchor-gate-app/releases/tag/v0.1.0) ("SorobanAnchor Gate App v0.1.0") is published with target `main` (commit `8a8394a7de8916b5a6249b1e9ed536e2617c299e`).
+- **Issues & PR Status**:
+  - Open PRs: **0**.
+  - Open Issues: **1**:
+    - `#1` `feat(relay): implement SEP-10 challenge signer client` (preserved honestly as legitimate planned future integration work / known boundary).
+  - Closed Issues:
+    - `#2` `feat(web): build interactive escrow creation form with Freighter connect` (closed; fully implemented and verified onchain).
+
+---
+
+## 2. Onchain Verification Baseline
 
 - **Verified Contract ID**: `CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT` (matching `soroban-anchor-gate-contract` release `v0.1.1`).
 - **Interactive Browser Wallet Verification**:
@@ -54,6 +49,14 @@
 
 ---
 
-## Release Readiness State
+## 3. Release & Branch Lifecycle Summary
 
-The application repository has passed all implementation, contract parity, test coverage, and live onchain verification milestones. It is **READY FOR MAIN PROMOTION** and tagging of the initial `v0.1.0` release. SEP-10 programmatic challenge authentication remains tracked in Issue #1 as a known future integration item.
+Release promotion is complete. The application repository and companion services are fully aligned between `develop` and `main` at `v0.1.0`. All required CI checks on `main` pass. SEP-10 programmatic challenge authentication remains tracked in Issue #1 as legitimate future integration work. The app is not waiting for release; release promotion is finished and verified.
+
+---
+
+## 4. Historical State Reference
+
+For auditing and traceability purposes, previous milestone states are catalogued:
+- **Pre-Promotion Integration HEAD**: Commit `a88048ad` previously served as develop HEAD prior to release promotion PR #13 / #14.
+- **Initial Setup Baseline**: Commit `a93c145` ("Create CONTRIBUTING.md") previously anchored initial repository scaffolding before release promotion aligned `main` with `develop`.
