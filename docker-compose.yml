@@ -1,0 +1,31 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: soroban-anchor-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_ESCROW_CONTRACT_ID=${CONTRACT_ID:-CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT}
+      - NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE=${STELLAR_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      - NEXT_PUBLIC_SOROBAN_RPC_URL=${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+
+  relay:
+    build:
+      context: .
+      dockerfile: services/relay/Dockerfile
+    container_name: soroban-anchor-relay
+    restart: unless-stopped
+    environment:
+      - SOROBAN_RPC_URL=${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+      - CONTRACT_ID=${CONTRACT_ID:-CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT}
+      - POLL_INTERVAL_SECONDS=5
+      - STORE_PATH=/data/events.json
+    volumes:
+      - relay_data:/data
+
+volumes:
+  relay_data:
