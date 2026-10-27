@@ -18,3 +18,10 @@ services/relay/relay
 *.log
 .DS_Store
 Thumbs.db
+
+# Rust & Soroban build artifacts
+target/
+contracts/target/
+*.wasm
+contracts/test_snapshots/
+test_snapshots/

@@ -1,0 +1,68 @@
+name: Drips Wave Sprint Task
+description: Create a task for contributors participating in the Stellar Drips Wave program
+title: '[WAVE]: '
+labels: ['drips-wave']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🌊 Stellar Drips Wave Program Task
+        Use this template to create clear, scoped issues for community contributors during the active Wave sprint.
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Task Complexity & Drips Points
+      description: Select the point valuation according to Drips Wave rules.
+      options:
+        - "Trivial (100 pts) - wave:trivial"
+        - "Medium (150 pts) - wave:medium"
+        - "High (200 pts) - wave:high"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Target Architecture Layer
+      options:
+        - "Smart Contracts (contracts/)"
+        - "Frontend Web App (apps/web/)"
+        - "Contract Client SDK (packages/contract-client/)"
+        - "Relay Daemon (services/relay/)"
+        - "Documentation & Evidence (docs/, evidence/)"
+        - "DevOps & CI/CD (.github/, deployment/)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Task Summary
+      description: Provide a clear explanation of the feature, fix, or enhancement to implement.
+      placeholder: "e.g., Implement multi-token whitelisting in contracts/src/types.rs..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Bulleted checklist that the contributor must satisfy for their PR to be accepted and merged.
+      value: |
+        - [ ] Code implemented in the designated module
+        - [ ] Unit tests added / passing with complete coverage
+        - [ ] Linter and format checks passing (`npm run lint` or `make lint`)
+        - [ ] Verified via local tests (`npm test`)
+        - [ ] Pull Request references this issue number
+    validations:
+      required: true
+
+  - type: textarea
+    id: tech_stack
+    attributes:
+      label: Tech Stack & Relevant Files
+      description: Relevant packages, dependencies, and file paths.
+      placeholder: "Rust, Soroban SDK v22, contracts/src/lib.rs, contracts/src/types.rs"
+    validations:
+      required: false

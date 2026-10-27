@@ -1,4 +1,4 @@
-name: App & Services CI
+name: Monorepo CI
 
 on:
   push:
@@ -7,41 +7,42 @@ on:
     branches: [develop, main]
 
 jobs:
-  go-relay-checks:
-    name: Go Relay Service Checks
+  contracts-checks:
+    name: Soroban Smart Contracts Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          go-version: '1.22'
-          cache-dependency-path: services/relay/go.sum
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
 
-      - name: Verify Go Formatting
+      - name: Verify Contract Formatting
         run: |
-          cd services/relay
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "The following files are not formatted with gofmt:"
-            gofmt -l .
-            exit 1
-          fi
+          cd contracts
+          cargo fmt --check
 
-      - name: Run Go Vet
+      - name: Run Cargo Check
         run: |
-          cd services/relay
-          go vet ./...
+          cd contracts
+          cargo check
 
-      - name: Run Go Tests & Race Detector
+      - name: Run Clippy Linter
         run: |
-          cd services/relay
-          go test -v -race ./...
+          cd contracts
+          cargo clippy --all-targets -- -D warnings
 
-      - name: Build Relay Daemon Executable
+      - name: Run Contract Unit & Lifecycle Tests
         run: |
-          cd services/relay
-          go build ./cmd/relay/main.go
+          cd contracts
+          cargo test
+
+      - name: Build Contract WASM
+        run: |
+          cd contracts
+          cargo build --target wasm32-unknown-unknown --release
 
   contract-client-checks:
     name: TypeScript Contract Client SDK Checks
@@ -111,3 +112,39 @@ jobs:
         run: |
           cd apps/web
           npm run build
+
+  go-relay-checks:
+    name: Go Relay Service Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.22'
+          cache-dependency-path: services/relay/go.sum
+
+      - name: Verify Go Formatting
+        run: |
+          cd services/relay
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files are not formatted with gofmt:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Run Go Vet
+        run: |
+          cd services/relay
+          go vet ./...
+
+      - name: Run Go Tests & Race Detector
+        run: |
+          cd services/relay
+          go test -v -race ./...
+
+      - name: Build Relay Daemon Executable
+        run: |
+          cd services/relay
+          go build ./cmd/relay/main.go
