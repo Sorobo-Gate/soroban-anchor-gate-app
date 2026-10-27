@@ -37,7 +37,7 @@ jobs:
       - name: Run Contract Unit & Lifecycle Tests
         run: |
           cd contracts
-          cargo test --features testutils
+          cargo test
 
       - name: Build Contract WASM
         run: |
