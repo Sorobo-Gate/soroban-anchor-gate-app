@@ -50,13 +50,18 @@ SorobanAnchor Gate bridges this gap through architectural separation:
 ## Repository structure
 
 ```text
-soroban-anchor-gate-app/
+soroban-anchor-gate/
+├── contracts/                 # Soroban milestone escrow smart contracts & Makefile
 ├── apps/
 │   └── web/                   # Next.js 16 frontend & Freighter wallet dashboard
 ├── packages/
 │   └── contract-client/       # TypeScript SDK for Soroban XDR encoding & math
 ├── services/
 │   └── relay/                 # Go event listener daemon & durable event store
+├── deployment/                # Docker compose configs & deployment manifests
+├── install.sh                 # One-click automated setup & verification script
+├── package.json               # Root monorepo orchestrator (install, dev, build, test)
+├── Makefile                   # Top-level Makefile for all components
 ├── evidence/                  # Empirical Testnet transaction reports & logs
 ├── docs/                      # Parity matrices and architectural specifications
 └── AUDIT/                     # Branch state and history remediation records
@@ -151,58 +156,63 @@ Empirical verification logs:
 
 ## Quick start
 
-### Prerequisites
-- Node.js >= 22.12.0
-- Go >= 1.22
-- Freighter browser extension installed
+### Automated Bootstrap (Recommended)
+Clone the repository and run the automated bootstrap script. It validates Node.js, Go, Rust, Soroban CLI, installs the `wasm32-unknown-unknown` target, sets up environment templates, and installs all dependencies:
 
-### 1. Web Application
 ```bash
-cd apps/web
-npm install
+./install.sh
+```
+
+### Manual Installation
+```bash
+# Install dependencies across all packages and services
+npm run install:all
+# or
+make install
+```
+
+### Running Locally
+```bash
+# Start Next.js web application and Go relay daemon concurrently:
 npm run dev
-# Open http://localhost:3000
-```
 
-### 2. Contract Client SDK
-```bash
-cd packages/contract-client
-npm install
-npm run build
+# Or using Docker Compose:
+docker compose up --build
 ```
-
-### 3. Relay Service
-```bash
-cd services/relay
-go build -o relay cmd/relay/main.go
-# Run with environment variables:
-SOROBAN_RPC_URL="https://soroban-testnet.stellar.org" \
-CONTRACT_ID="CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT" \
-./relay
-```
+- Web Application: `http://localhost:3000`
+- Soroban Testnet Contract: `CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT`
 
 ---
 
 ## Testing
 
-Each component maintains automated verification suites:
+Run all automated test suites across all 4 architectural layers with a single command:
 
 ```bash
-# Web application unit tests & typechecking
-cd apps/web
-npm run typecheck
-npm run test
-
-# Contract client SDK tests
-cd packages/contract-client
-npm run typecheck
-npm run test
-
-# Relay daemon tests with Go race detector
-cd services/relay
-go vet ./...
-go test -v -race ./...
+npm test
+# or
+make test
 ```
+
+| Layer | Command | Tests | Status |
+| --- | --- | --- | --- |
+| **Smart Contracts** | `cd contracts && make test` | 21 Soroban lifecycle tests | `PASSING` |
+| **Contract Client SDK** | `cd packages/contract-client && npm test` | 13 TypeScript SDK tests | `PASSING` |
+| **Web Application** | `cd apps/web && npm test` | 21 Next.js transaction tests | `PASSING` |
+| **Relay Service** | `cd services/relay && go test -v -race ./...` | 15 Go race tests | `PASSING` |
+
+---
+
+## 🌊 Stellar Drips Wave Program
+
+SorobanAnchor Gate is architected as an active **Maintainer Project** within the **Stellar Drips Wave Program**.
+
+- **Sprint Issues**: Contributors can browse issues labeled `drips-wave` with point valuations:
+  - `wave:trivial` (100 pts)
+  - `wave:medium` (150 pts)
+  - `wave:high` (200 pts)
+- **Contribution Workflow**: See [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch naming (`wave/<issue-number>-<name>`), testing requirements, and PR review standards.
+
 
 ---
 
