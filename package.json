@@ -1,0 +1,56 @@
+{
+  "name": "soroban-anchor-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SorobanAnchor Gate - Milestone Escrow & Stellar Anchor Bridge Monorepo",
+  "scripts": {
+    "install:all": "npm install && npm run install:web && npm run install:client && npm run install:contracts && npm run install:relay",
+    "install:web": "cd apps/web && npm install",
+    "install:client": "cd packages/contract-client && npm install",
+    "install:contracts": "cd contracts && cargo check",
+    "install:relay": "cd services/relay && go mod download",
+    "dev": "concurrently --names web,relay --prefix-colors cyan,magenta \"npm run dev:web\" \"npm run dev:relay\"",
+    "dev:web": "cd apps/web && npm run dev",
+    "dev:relay": "cd services/relay && go run cmd/relay/main.go",
+    "build": "npm run build:contracts && npm run build:client && npm run build:web && npm run build:relay",
+    "build:contracts": "cd contracts && cargo build --target wasm32-unknown-unknown --release",
+    "build:client": "cd packages/contract-client && npm run build",
+    "build:web": "cd apps/web && npm run build",
+    "build:relay": "cd services/relay && go build -o relay cmd/relay/main.go",
+    "test": "npm run test:contracts && npm run test:client && npm run test:web && npm run test:relay",
+    "test:contracts": "cd contracts && cargo test",
+    "test:client": "cd packages/contract-client && npm test",
+    "test:web": "cd apps/web && npm test",
+    "test:relay": "cd services/relay && go test -v -race ./...",
+    "lint": "npm run lint:contracts && npm run lint:client && npm run lint:web && npm run lint:relay",
+    "lint:contracts": "cd contracts && cargo fmt --check && cargo clippy --all-targets -- -D warnings",
+    "lint:client": "cd packages/contract-client && npm run typecheck",
+    "lint:web": "cd apps/web && npm run lint && npm run typecheck",
+    "lint:relay": "cd services/relay && go vet ./...",
+    "clean": "rm -rf node_modules apps/web/node_modules apps/web/.next packages/contract-client/node_modules packages/contract-client/dist contracts/target services/relay/relay"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sorobo-Gate/soroban-anchor-gate-app"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "escrow",
+    "anchor",
+    "freighter",
+    "sep-10",
+    "sep-31",
+    "drips",
+    "hackathon"
+  ],
+  "author": "Sorobo-Gate",
+  "license": "Apache-2.0"
+}
