@@ -35,6 +35,7 @@ export enum EscrowContractState {
   Funded = "Funded",
   Disbursed = "Disbursed",
   Refunded = "Refunded",
+  Disputed = "Disputed",
 }
 
 export enum EscrowError {
@@ -48,6 +49,31 @@ export enum EscrowError {
   ZeroAmount = 8,
   InvalidBps = 9,
   ArithmeticOverflow = 10,
+  TokenNotWhitelisted = 11,
+  InvalidDisputeSplit = 12,
+}
+
+export interface ResolveDisputeParams {
+  escrowId: bigint;
+  caller: string;
+  payerBps: number;
+  beneficiaryBps: number;
+}
+
+export interface SetTokenWhitelistParams {
+  caller: string;
+  token: string;
+  whitelisted: boolean;
+}
+
+export interface EscrowRecordView {
+  payer: string;
+  beneficiary: string;
+  token: string;
+  amount: bigint;
+  profileHashHex: string;
+  status: EscrowContractState;
+  unlockTimestamp: bigint;
 }
 
 export function validateClientConfig(config: ClientConfig): void {
@@ -184,11 +210,103 @@ export class EscrowGateClient {
     return [nativeToScVal(escrowId, { type: "u64" })];
   }
 
+  public buildResolveDisputeTx(params: ResolveDisputeParams): xdr.ScVal[] {
+    if (params.escrowId < 0n) {
+      throw new Error("escrowId cannot be negative");
+    }
+    if (!isValidAddress(params.caller)) {
+      throw new Error(`Invalid caller address: ${params.caller}`);
+    }
+    if (
+      params.payerBps < 0 ||
+      params.beneficiaryBps < 0 ||
+      params.payerBps + params.beneficiaryBps !== 10000
+    ) {
+      throw new Error("Dispute split basis points must sum to exactly 10,000 (100%)");
+    }
+    return [
+      nativeToScVal(params.escrowId, { type: "u64" }),
+      new Address(params.caller).toScVal(),
+      nativeToScVal(params.payerBps, { type: "u32" }),
+      nativeToScVal(params.beneficiaryBps, { type: "u32" }),
+    ];
+  }
+
+  public buildSetTokenWhitelistTx(params: SetTokenWhitelistParams): xdr.ScVal[] {
+    if (!isValidAddress(params.caller)) {
+      throw new Error(`Invalid caller address: ${params.caller}`);
+    }
+    if (!isValidAddress(params.token)) {
+      throw new Error(`Invalid token address: ${params.token}`);
+    }
+    return [
+      new Address(params.caller).toScVal(),
+      new Address(params.token).toScVal(),
+      nativeToScVal(params.whitelisted, { type: "bool" }),
+    ];
+  }
+
+  public buildGetEscrowTx(escrowId: bigint): xdr.ScVal[] {
+    if (escrowId < 0n) {
+      throw new Error("escrowId cannot be negative");
+    }
+    return [nativeToScVal(escrowId, { type: "u64" })];
+  }
+
+  public buildIsTokenWhitelistedTx(token: string): xdr.ScVal[] {
+    if (!isValidAddress(token)) {
+      throw new Error(`Invalid token address: ${token}`);
+    }
+    return [new Address(token).toScVal()];
+  }
+
   public buildOperation(
-    method: "init" | "create_escrow" | "release_to_anchor" | "refund",
+    method:
+      | "init"
+      | "create_escrow"
+      | "release_to_anchor"
+      | "refund"
+      | "resolve_dispute"
+      | "set_token_whitelist"
+      | "is_token_whitelisted"
+      | "get_escrow"
+      | "get_counter"
+      | "get_admin"
+      | "get_treasury"
+      | "get_fee_bps",
     args: xdr.ScVal[]
   ): xdr.Operation {
     return this.contract.call(method, ...args);
+  }
+
+  public parseEscrowRecord(rawVal: xdr.ScVal): EscrowRecordView {
+    const native = scValToNative(rawVal);
+    if (!native || typeof native !== "object") {
+      throw new Error("Invalid escrow record ScVal");
+    }
+
+    let status = EscrowContractState.Funded;
+    const rawStatus = native.status?.name || native.status || "";
+    if (rawStatus === "Disbursed") status = EscrowContractState.Disbursed;
+    else if (rawStatus === "Refunded") status = EscrowContractState.Refunded;
+    else if (rawStatus === "Disputed") status = EscrowContractState.Disputed;
+
+    let profileHashHex = "";
+    if (native.profile_hash instanceof Uint8Array || Buffer.isBuffer(native.profile_hash)) {
+      profileHashHex = Buffer.from(native.profile_hash).toString("hex");
+    } else if (typeof native.profile_hash === "string") {
+      profileHashHex = native.profile_hash;
+    }
+
+    return {
+      payer: String(native.payer || ""),
+      beneficiary: String(native.beneficiary || ""),
+      token: String(native.token || ""),
+      amount: BigInt(native.amount ?? 0),
+      profileHashHex,
+      status,
+      unlockTimestamp: BigInt(native.unlock_timestamp ?? 0),
+    };
   }
 
   public decodeContractResult(scVal: xdr.ScVal): any {
