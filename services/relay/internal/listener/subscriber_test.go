@@ -1,7 +1,11 @@
 package listener
 
 import (
+	"context"
+	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -233,5 +237,60 @@ func TestDecodeDisbursedEvent_FailedContractCall(t *testing.T) {
 	_, err := DecodeDisbursedEvent(item, testContractID)
 	if err == nil {
 		t.Fatalf("expected error for event from failed contract call")
+	}
+}
+
+func TestParseMinLedgerFromRangeError(t *testing.T) {
+	errStr := "RPC error code -32600: startLedger must be within the ledger range: 5431645 - 5552604"
+	minLedger := parseMinLedgerFromRangeError(errStr)
+	if minLedger != 5431645 {
+		t.Fatalf("expected min ledger 5431645, got %d", minLedger)
+	}
+
+	// Should return 0 for non-matching error
+	nonMatching := "RPC error code -32000: Internal server error"
+	if parseMinLedgerFromRangeError(nonMatching) != 0 {
+		t.Fatalf("expected 0 for non-matching error")
+	}
+}
+
+func TestIsLedgerRangeError(t *testing.T) {
+	err := fmt.Errorf("RPC error code -32600: startLedger must be within the ledger range: 5431645 - 5552604")
+	if !isLedgerRangeError(err) {
+		t.Fatalf("expected isLedgerRangeError to be true")
+	}
+
+	genericErr := fmt.Errorf("connection refused")
+	if isLedgerRangeError(genericErr) {
+		t.Fatalf("expected isLedgerRangeError to be false for generic error")
+	}
+
+	if isLedgerRangeError(nil) {
+		t.Fatalf("expected isLedgerRangeError to be false for nil error")
+	}
+}
+
+func TestGetLatestLedger_MockServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"result": {
+				"id": "abc",
+				"protocolVersion": 22,
+				"sequence": 5552604
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	sub := NewEventSubscriber(server.URL, testContractID, nil, nil)
+	seq, err := sub.GetLatestLedger(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error calling GetLatestLedger: %v", err)
+	}
+	if seq != 5552604 {
+		t.Fatalf("expected sequence 5552604, got %d", seq)
 	}
 }
