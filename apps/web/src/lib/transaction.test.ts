@@ -1,10 +1,20 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
+import * as nodeCrypto from "node:crypto";
+
+if (typeof globalThis.crypto === "undefined" || !globalThis.crypto.getRandomValues) {
+  // @ts-expect-error polyfill for older Node environments
+  globalThis.crypto = nodeCrypto.webcrypto;
+}
+
 import { Account, Keypair, Transaction, TransactionBuilder, rpc } from "@stellar/stellar-sdk";
 import {
   validateEscrowForm,
   verifyWalletNetwork,
   buildEscrowContractCall,
+  buildReleaseContractCall,
+  buildRefundContractCall,
+  buildResolveDisputeContractCall,
   simulateAndPrepareTransaction,
   submitSignedTransaction,
   pollTransactionConfirmation,
@@ -286,6 +296,44 @@ describe("Frontend Financial Transaction Flow & Validation", () => {
     await assert.rejects(
       () => pollTransactionConfirmation(mockServer, "failed_hash", 2, 10),
       /Transaction failed onchain in ledger 5036000/
+    );
+  });
+
+  test("buildReleaseContractCall constructs release operation", () => {
+    const op = buildReleaseContractCall(
+      validContractId,
+      1n,
+      validPayer,
+      validBeneficiary
+    );
+    assert.strictEqual(op.body.type, "invokeHostFunction");
+  });
+
+  test("buildRefundContractCall constructs refund operation", () => {
+    const op = buildRefundContractCall(validContractId, 2n);
+    assert.strictEqual(op.body.type, "invokeHostFunction");
+  });
+
+  test("buildResolveDisputeContractCall validates basis points and constructs operation", () => {
+    const op = buildResolveDisputeContractCall(
+      validContractId,
+      3n,
+      validPayer,
+      5000,
+      5000
+    );
+    assert.strictEqual(op.body.type, "invokeHostFunction");
+
+    assert.throws(
+      () =>
+        buildResolveDisputeContractCall(
+          validContractId,
+          3n,
+          validPayer,
+          4000,
+          5000
+        ),
+      /Basis points must sum to exactly 10,000/
     );
   });
 });
