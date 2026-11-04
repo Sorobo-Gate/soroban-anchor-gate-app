@@ -341,32 +341,50 @@ export default function HomePage() {
       {/* Main Body */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8 flex-1 w-full">
         {/* Network & Contract Banner */}
-        <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-r from-card via-card/90 to-primary/5 p-6 shadow-sm">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+        <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-r from-card via-card/95 to-accent/30 p-6 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-primary/10 text-primary border border-primary/20 uppercase font-mono">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-primary/10 text-brand-gate border border-primary/20 uppercase font-mono">
                   Stellar Testnet
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-secondary/20 text-secondary-foreground border border-secondary/40 font-mono">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-secondary text-secondary-foreground border border-border font-mono">
                   Contract Fee: 200 BPS (2.0%)
                 </span>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
                 Soroban Anchor Gate & Escrow Bridge
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
+                Create &bull; Manage &bull; Track &bull; Settle Escrows on Stellar
+              </p>
+              <p className="text-xs text-muted-foreground/80 mt-2">
                 Authoritative Contract:{" "}
                 <a
                   href={`https://stellar.expert/explorer/testnet/contract/${config.contractId}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="font-mono text-primary hover:underline inline-flex items-center gap-1"
+                  className="font-mono text-brand-gate hover:underline inline-flex items-center gap-1"
                 >
                   {config.contractId.slice(0, 16)}...{config.contractId.slice(-8)}
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </p>
+            </div>
+
+            <div className="hidden lg:flex items-center gap-6 text-xs text-muted-foreground border-l border-border/60 pl-6">
+              <div>
+                <div className="font-semibold text-foreground">Freighter Wallet</div>
+                <div className="text-[10px] text-brand-gate uppercase tracking-wider font-mono">Verified Onchain</div>
+              </div>
+              <div>
+                <div className="font-semibold text-foreground">Escrow Management</div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">Simple & Secure</div>
+              </div>
+              <div>
+                <div className="font-semibold text-foreground">Onchain Transparency</div>
+                <div className="text-[10px] text-brand-gate uppercase tracking-wider font-mono">Real-Time Data</div>
+              </div>
             </div>
           </div>
         </div>
