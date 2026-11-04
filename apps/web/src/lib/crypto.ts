@@ -4,7 +4,16 @@ export async function hashRoutingInfo(routingInfo: string): Promise<string> {
   }
   const encoder = new TextEncoder();
   const data = encoder.encode(routingInfo.trim());
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+
+  let subtleCrypto: SubtleCrypto;
+  if (typeof globalThis !== "undefined" && globalThis.crypto?.subtle) {
+    subtleCrypto = globalThis.crypto.subtle;
+  } else {
+    const nodeCrypto = await import("node:crypto");
+    subtleCrypto = (nodeCrypto.webcrypto as unknown as Crypto).subtle;
+  }
+
+  const hashBuffer = await subtleCrypto.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
