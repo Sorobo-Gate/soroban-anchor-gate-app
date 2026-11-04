@@ -88,7 +88,7 @@ make test
 #### 1. Smart Contracts (`contracts/`)
 ```bash
 cd contracts
-make test              # Run 21 Soroban unit & lifecycle tests
+make test              # Run 27 Soroban unit & lifecycle tests
 make build             # Compile contract WASM artifact
 make lint              # Run cargo fmt and clippy checks
 ```
@@ -98,7 +98,7 @@ make lint              # Run cargo fmt and clippy checks
 cd apps/web
 npm run lint           # ESLint verification
 npm run typecheck      # TypeScript typecheck
-npm run test           # Run 21 Jest/Node test cases
+npm run test           # Run 24 Jest/Node test cases
 npm run build          # Production Next.js build
 ```
 
@@ -106,7 +106,7 @@ npm run build          # Production Next.js build
 ```bash
 cd packages/contract-client
 npm run typecheck      # Typecheck
-npm run test           # Run 13 SDK unit tests
+npm run test           # Run 16 SDK unit tests
 npm run build          # Build TypeScript distribution
 ```
 
@@ -114,7 +114,7 @@ npm run build          # Build TypeScript distribution
 ```bash
 cd services/relay
 go vet ./...           # Static analysis
-go test -v -race ./... # Concurrency race tests
+go test -v -race ./... # 21 Concurrency race & API tests
 go build ./cmd/relay/main.go
 ```
 

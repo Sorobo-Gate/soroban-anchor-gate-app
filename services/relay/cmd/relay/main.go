@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
+	"github.com/soroban-anchor-gate/relay/internal/api"
 	"github.com/soroban-anchor-gate/relay/internal/listener"
 	"github.com/soroban-anchor-gate/relay/internal/store"
 )
@@ -25,7 +29,12 @@ func main() {
 		rpcURL = "https://soroban-testnet.stellar.org"
 	}
 
-	var startLedger uint32 = 1
+	apiPort := os.Getenv("PORT")
+	if apiPort == "" {
+		apiPort = "8080"
+	}
+
+	var startLedger uint32 = 0
 	if s := os.Getenv("START_LEDGER"); s != "" {
 		if val, err := strconv.ParseUint(s, 10, 32); err == nil {
 			startLedger = uint32(val)
@@ -56,16 +65,33 @@ func main() {
 		"contract_id", contractID,
 		"start_ledger", relayStore.GetCursor(),
 		"store_path", storePath,
+		"api_port", apiPort,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	// Start HTTP API monitoring server
+	apiServer := api.NewServer(contractID, rpcURL, relayStore)
+	httpServer := &http.Server{
+		Addr:         ":" + apiPort,
+		Handler:      apiServer.Handler(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	go func() {
+		logger.Info("Relay HTTP API server listening", "port", apiPort)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP API server failure", "error", err)
+		}
+	}()
+
 	eventChan := make(chan listener.EventPayload, 100)
 	sub := listener.NewEventSubscriber(rpcURL, contractID, relayStore, logger)
 
 	go func() {
-		if err := sub.PollEvents(ctx, eventChan); err != nil && err != context.Canceled {
+		if err := sub.PollEvents(ctx, eventChan); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Event poller failure", "error", err)
 		}
 	}()
@@ -96,4 +122,8 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("Shutting down relay daemon gracefully")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	_ = httpServer.Shutdown(shutdownCtx)
 }

@@ -125,6 +125,74 @@ export function buildEscrowContractCall(
   );
 }
 
+export function buildReleaseContractCall(
+  contractId: string,
+  escrowId: bigint,
+  caller: string,
+  anchorDisbursementAddress: string
+): xdr.Operation {
+  if (escrowId < 0n) {
+    throw new Error("escrowId cannot be negative");
+  }
+  if (!StrKey.isValidEd25519PublicKey(caller) && !StrKey.isValidContract(caller)) {
+    throw new Error(`Invalid caller address: "${caller}"`);
+  }
+  if (
+    !StrKey.isValidEd25519PublicKey(anchorDisbursementAddress) &&
+    !StrKey.isValidContract(anchorDisbursementAddress)
+  ) {
+    throw new Error(
+      `Invalid anchor disbursement address: "${anchorDisbursementAddress}"`
+    );
+  }
+
+  const contract = new Contract(contractId);
+  return contract.call(
+    "release_to_anchor",
+    nativeToScVal(escrowId, { type: "u64" }),
+    new Address(caller).toScVal(),
+    new Address(anchorDisbursementAddress).toScVal()
+  );
+}
+
+export function buildRefundContractCall(
+  contractId: string,
+  escrowId: bigint
+): xdr.Operation {
+  if (escrowId < 0n) {
+    throw new Error("escrowId cannot be negative");
+  }
+  const contract = new Contract(contractId);
+  return contract.call("refund", nativeToScVal(escrowId, { type: "u64" }));
+}
+
+export function buildResolveDisputeContractCall(
+  contractId: string,
+  escrowId: bigint,
+  caller: string,
+  payerBps: number,
+  beneficiaryBps: number
+): xdr.Operation {
+  if (escrowId < 0n) {
+    throw new Error("escrowId cannot be negative");
+  }
+  if (!StrKey.isValidEd25519PublicKey(caller) && !StrKey.isValidContract(caller)) {
+    throw new Error(`Invalid caller address: "${caller}"`);
+  }
+  if (payerBps < 0 || beneficiaryBps < 0 || payerBps + beneficiaryBps !== 10000) {
+    throw new Error("Basis points must sum to exactly 10,000 (100%)");
+  }
+
+  const contract = new Contract(contractId);
+  return contract.call(
+    "resolve_dispute",
+    nativeToScVal(escrowId, { type: "u64" }),
+    new Address(caller).toScVal(),
+    nativeToScVal(payerBps, { type: "u32" }),
+    nativeToScVal(beneficiaryBps, { type: "u32" })
+  );
+}
+
 export async function buildInitialTransaction(
   server: rpc.Server,
   sourceAddress: string,

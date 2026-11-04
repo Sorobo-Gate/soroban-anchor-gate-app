@@ -62,6 +62,10 @@ impl EscrowGate {
             return Err(EscrowError::ZeroAmount);
         }
 
+        if !Self::is_token_whitelisted(env.clone(), token.clone()) {
+            return Err(EscrowError::TokenNotWhitelisted);
+        }
+
         let mut counter: u64 = env
             .storage()
             .instance()
@@ -220,5 +224,166 @@ impl EscrowGate {
             .publish((Symbol::new(&env, "refunded"), escrow_id), record.amount);
 
         Ok(())
+    }
+
+    pub fn set_token_whitelist(
+        env: Env,
+        caller: Address,
+        token: Address,
+        whitelisted: bool,
+    ) -> Result<(), EscrowError> {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
+
+        if caller != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenWhitelisted(token.clone()), &whitelisted);
+        env.storage()
+            .instance()
+            .set(&DataKey::WhitelistActive, &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events()
+            .publish((Symbol::new(&env, "whitelist"), token), whitelisted);
+
+        Ok(())
+    }
+
+    pub fn is_token_whitelisted(env: Env, token: Address) -> bool {
+        let is_active: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistActive)
+            .unwrap_or(false);
+
+        if !is_active {
+            return true;
+        }
+
+        env.storage()
+            .instance()
+            .get(&DataKey::TokenWhitelisted(token))
+            .unwrap_or(false)
+    }
+
+    pub fn resolve_dispute(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        payer_bps: u32,
+        beneficiary_bps: u32,
+    ) -> Result<(), EscrowError> {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
+
+        if caller != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        if (payer_bps as u64) + (beneficiary_bps as u64) != (BPS_DIVISOR as u64) {
+            return Err(EscrowError::InvalidDisputeSplit);
+        }
+
+        let key = DataKey::Escrow(escrow_id);
+        let mut record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let payer_amount = record
+            .amount
+            .checked_mul(payer_bps as i128)
+            .ok_or(EscrowError::ArithmeticOverflow)?
+            / BPS_DIVISOR;
+
+        let beneficiary_amount = record
+            .amount
+            .checked_sub(payer_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+
+        let token_client = token::Client::new(&env, &record.token);
+
+        if payer_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &record.payer,
+                &payer_amount,
+            );
+        }
+
+        if beneficiary_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &record.beneficiary,
+                &beneficiary_amount,
+            );
+        }
+
+        record.status = EscrowStatus::Disputed;
+        env.storage().persistent().set(&key, &record);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events().publish(
+            (Symbol::new(&env, "dispute_resolved"), escrow_id),
+            (payer_amount, beneficiary_amount),
+        );
+
+        Ok(())
+    }
+
+    pub fn get_escrow(env: Env, escrow_id: u64) -> Result<EscrowRecord, EscrowError> {
+        let key = DataKey::Escrow(escrow_id);
+        env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)
+    }
+
+    pub fn get_counter(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0)
+    }
+
+    pub fn get_admin(env: Env) -> Result<Address, EscrowError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)
+    }
+
+    pub fn get_treasury(env: Env) -> Result<Address, EscrowError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Treasury)
+            .ok_or(EscrowError::NotInitialized)
+    }
+
+    pub fn get_fee_bps(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
     }
 }
