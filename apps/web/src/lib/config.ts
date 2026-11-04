@@ -59,8 +59,11 @@ export function getAppConfig(): AppConfig {
     );
   }
 
-  const rawContractId =
+  let rawContractId =
     process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ID || DEFAULT_TESTNET_CONTRACT_ID;
+  if (rawContractId === "CA..." || !StrKey.isValidContract(rawContractId.trim())) {
+    rawContractId = DEFAULT_TESTNET_CONTRACT_ID;
+  }
   const contractId = validateContractId(rawContractId);
 
   const rawRpcUrl =

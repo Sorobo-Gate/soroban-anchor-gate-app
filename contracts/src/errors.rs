@@ -14,4 +14,6 @@ pub enum EscrowError {
     ZeroAmount = 8,
     InvalidBps = 9,
     ArithmeticOverflow = 10,
+    TokenNotWhitelisted = 11,
+    InvalidDisputeSplit = 12,
 }

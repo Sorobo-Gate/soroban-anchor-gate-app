@@ -6,6 +6,7 @@ pub enum EscrowStatus {
     Funded,
     Disbursed,
     Refunded,
+    Disputed,
 }
 
 #[contracttype]
@@ -28,4 +29,6 @@ pub enum DataKey {
     FeeBps,
     EscrowCounter,
     Escrow(u64),
+    TokenWhitelisted(Address),
+    WhitelistActive,
 }

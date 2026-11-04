@@ -152,10 +152,60 @@ describe("EscrowGateClient & SDK Helpers", () => {
     assert.strictEqual(op.body.type, "invokeHostFunction");
   });
 
+  test("buildResolveDisputeTx encodes parameters and validates basis points", () => {
+    const client = new EscrowGateClient(validConfig);
+    const args = client.buildResolveDisputeTx({
+      escrowId: 1n,
+      caller: validAdmin,
+      payerBps: 6000,
+      beneficiaryBps: 4000,
+    });
+    assert.strictEqual(args.length, 4);
+    assert.strictEqual(scValToNative(args[0]), 1n);
+    assert.strictEqual(scValToNative(args[1]), validAdmin);
+    assert.strictEqual(scValToNative(args[2]), 6000);
+    assert.strictEqual(scValToNative(args[3]), 4000);
+
+    // Rejects invalid bps sums
+    assert.throws(() =>
+      client.buildResolveDisputeTx({
+        escrowId: 1n,
+        caller: validAdmin,
+        payerBps: 5000,
+        beneficiaryBps: 4000,
+      })
+    );
+  });
+
+  test("buildSetTokenWhitelistTx encodes caller, token, and status", () => {
+    const client = new EscrowGateClient(validConfig);
+    const args = client.buildSetTokenWhitelistTx({
+      caller: validAdmin,
+      token: validToken,
+      whitelisted: true,
+    });
+    assert.strictEqual(args.length, 3);
+    assert.strictEqual(scValToNative(args[0]), validAdmin);
+    assert.strictEqual(scValToNative(args[1]), validToken);
+    assert.strictEqual(scValToNative(args[2]), true);
+  });
+
+  test("buildGetEscrowTx and buildIsTokenWhitelistedTx encode queries", () => {
+    const client = new EscrowGateClient(validConfig);
+    const getArgs = client.buildGetEscrowTx(5n);
+    assert.strictEqual(getArgs.length, 1);
+    assert.strictEqual(scValToNative(getArgs[0]), 5n);
+
+    const isWhiteArgs = client.buildIsTokenWhitelistedTx(validToken);
+    assert.strictEqual(isWhiteArgs.length, 1);
+    assert.strictEqual(scValToNative(isWhiteArgs[0]), validToken);
+  });
+
   test("contract state enum match", () => {
     assert.strictEqual(EscrowContractState.Funded, "Funded");
     assert.strictEqual(EscrowContractState.Disbursed, "Disbursed");
     assert.strictEqual(EscrowContractState.Refunded, "Refunded");
+    assert.strictEqual(EscrowContractState.Disputed, "Disputed");
   });
 
   test("contract error enum parity match", () => {
@@ -169,5 +219,7 @@ describe("EscrowGateClient & SDK Helpers", () => {
     assert.strictEqual(EscrowError.ZeroAmount, 8);
     assert.strictEqual(EscrowError.InvalidBps, 9);
     assert.strictEqual(EscrowError.ArithmeticOverflow, 10);
+    assert.strictEqual(EscrowError.TokenNotWhitelisted, 11);
+    assert.strictEqual(EscrowError.InvalidDisputeSplit, 12);
   });
 });

@@ -36,6 +36,8 @@ type IdempotencyStore interface {
 	MarkProcessed(eventID string) error
 	GetCursor() uint32
 	SetCursor(ledger uint32) error
+	Count() int
+	ListAll() []EventRecord
 	Close() error
 }
 
@@ -145,6 +147,22 @@ func (s *MemoryStore) SetCursor(ledger uint32) error {
 	}
 	s.cursor = ledger
 	return nil
+}
+
+func (s *MemoryStore) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.records)
+}
+
+func (s *MemoryStore) ListAll() []EventRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	list := make([]EventRecord, 0, len(s.records))
+	for _, r := range s.records {
+		list = append(list, r)
+	}
+	return list
 }
 
 func (s *MemoryStore) Close() error {
@@ -320,6 +338,22 @@ func (s *DurableFileStore) SetCursor(ledger uint32) error {
 	}
 	s.cursor = ledger
 	return s.saveLocked()
+}
+
+func (s *DurableFileStore) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.records)
+}
+
+func (s *DurableFileStore) ListAll() []EventRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	list := make([]EventRecord, 0, len(s.records))
+	for _, r := range s.records {
+		list = append(list, r)
+	}
+	return list
 }
 
 func (s *DurableFileStore) Close() error {

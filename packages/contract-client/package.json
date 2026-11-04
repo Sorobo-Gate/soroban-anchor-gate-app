@@ -2,7 +2,7 @@
   "name": "@soroban-anchor-gate/contract-client",
   "version": "0.1.0",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=20.0.0"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
