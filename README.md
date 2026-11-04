@@ -73,13 +73,15 @@ soroban-anchor-gate/
 
 | Surface | Implementation Status | Verification Evidence |
 | --- | --- | --- |
-| **Contract Client SDK** | `VERIFIED` | 13/13 unit tests passing; typed builders and integer math |
+| **Smart Contracts (Rust)** | `VERIFIED` | 27/27 Soroban tests passing; dispute resolution, token whitelist, and getters |
+| **Contract Client SDK** | `VERIFIED` | 16/16 unit tests passing; typed builders, integer math, and dispute splits |
 | **Escrow Creation Onchain** | `VERIFIED ONCHAIN` | Testnet Tx [`e0b57482...`](https://stellar.expert/explorer/testnet/tx/e0b574823c2c8bd9e8b9e97ae561c69e536fc38b6f61a21553d1f6e27e75980d) and [`2392ac9b...`](https://stellar.expert/explorer/testnet/tx/2392ac9b4de86ac22c6d3b5d10fe12c387e8c9a7ea04217763a2defcf0015e42) |
 | **Freighter Extension Boundary** | `VERIFIED ONCHAIN` | Live browser testnet transaction on ledger `5069983` ([Report](evidence/testnet-verified-2026-10-07.md)) |
-| **Frontend Simulation & State** | `TESTED LOCALLY` | 21/21 passing Next.js tests; RPC simulation and polling logic |
+| **Frontend Simulation & State** | `TESTED LOCALLY` | 24/24 passing Next.js tests; interactive deposit, release, refund, and dispute flows |
 | **Relay Event Decoder** | `TESTED LOCALLY` | 11/11 Go unit tests passing with `-race`; i128 `*big.Int` decoding |
+| **Relay SEP-10 Authentication** | `TESTED LOCALLY` | 4/4 Go unit tests passing; challenge signing, JWT exchange, and cache expiry |
 | **Durable Store & Idempotency** | `TESTED LOCALLY` | 4/4 Go unit tests passing with `-race`; restart recovery and deduplication |
-| **SEP-10 / SEP-31 Integration** | `KNOWN LIMITATION` | Tracked in [Issue #1](https://github.com/Sorobo-Gate/soroban-anchor-gate-app/issues/1); partner anchor endpoint pending |
+| **Relay HTTP API Monitoring** | `TESTED LOCALLY` | 2/2 Go unit tests passing; `/health`, `/status`, and `/events` endpoints |
 
 ---
 
@@ -196,10 +198,11 @@ make test
 
 | Layer | Command | Tests | Status |
 | --- | --- | --- | --- |
-| **Smart Contracts** | `cd contracts && make test` | 21 Soroban lifecycle tests | `PASSING` |
-| **Contract Client SDK** | `cd packages/contract-client && npm test` | 13 TypeScript SDK tests | `PASSING` |
-| **Web Application** | `cd apps/web && npm test` | 21 Next.js transaction tests | `PASSING` |
-| **Relay Service** | `cd services/relay && go test -v -race ./...` | 15 Go race tests | `PASSING` |
+| **Smart Contracts** | `cd contracts && make test` | 27 Soroban lifecycle tests | `PASSING` |
+| **Contract Client SDK** | `cd packages/contract-client && npm test` | 16 TypeScript SDK tests | `PASSING` |
+| **Web Application** | `cd apps/web && npm test` | 24 Next.js transaction tests | `PASSING` |
+| **Relay Service** | `cd services/relay && go test -v -race ./...` | 21 Go race & API tests | `PASSING` |
+| **Total Test Suite** | `npm test` | **88 Automated Tests** | `100% PASSING` |
 
 ---
 
@@ -207,11 +210,12 @@ make test
 
 SorobanAnchor Gate is architected as an active **Maintainer Project** within the **Stellar Drips Wave Program**.
 
-- **Sprint Issues**: Contributors can browse issues labeled `drips-wave` with point valuations:
+* **Gas & WASM Profiling**: [`docs/gas-benchmarks.md`](docs/gas-benchmarks.md) (Compiled WASM size: 12.3 KB)
+* **Sprint Issues**: Contributors can browse issues labeled `drips-wave` with point valuations:
   - `wave:trivial` (100 pts)
   - `wave:medium` (150 pts)
   - `wave:high` (200 pts)
-- **Contribution Workflow**: See [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch naming (`wave/<issue-number>-<name>`), testing requirements, and PR review standards.
+* **Contribution Workflow**: See [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch naming (`wave/<issue-number>-<name>`), testing requirements, and PR review standards.
 
 
 ---
