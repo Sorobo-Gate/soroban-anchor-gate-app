@@ -22,7 +22,6 @@ import {
   Send,
   FileCheck,
   Scale,
-  Sparkles,
   Coins,
   History,
 } from "lucide-react";
@@ -341,17 +340,13 @@ export default function HomePage() {
 
       {/* Main Body */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8 flex-1 w-full">
-        {/* Network & Stellar Drips Wave Banner */}
+        {/* Network & Contract Banner */}
         <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-r from-card via-card/90 to-primary/5 p-6 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-primary/10 text-primary border border-primary/20 uppercase font-mono">
                   Stellar Testnet
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" />
-                  Stellar Drips Wave Maintainer Project
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-secondary/20 text-secondary-foreground border border-secondary/40 font-mono">
                   Contract Fee: 200 BPS (2.0%)
@@ -372,18 +367,6 @@ export default function HomePage() {
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <a
-                href="https://github.com/Sorobo-Gate/soroban-anchor-gate-app/issues?q=label%3Adrips-wave"
-                target="_blank"
-                rel="noreferrer"
-                className="px-4 py-2 rounded-xl bg-card border border-border text-xs font-semibold hover:border-primary/50 text-foreground transition flex items-center gap-2"
-              >
-                <span>View Wave Sprint Tasks</span>
-                <ExternalLink className="w-3.5 h-3.5 text-primary" />
-              </a>
             </div>
           </div>
         </div>
@@ -849,51 +832,6 @@ export default function HomePage() {
 
           {/* Sidebar / Protocol State */}
           <div className="space-y-6">
-            {/* Drips Wave Program Status Card */}
-            <Card className="border-blue-500/30 bg-blue-500/5">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-base">Stellar Drips Wave</CardTitle>
-                    <CardDescription>Active Sprint Ecosystem Program</CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3 text-xs">
-                <p className="text-muted-foreground">
-                  Developers can contribute to this project during active Wave sprints to earn USDC reward points from the SDF ecosystem pool:
-                </p>
-                <div className="space-y-1.5 font-mono">
-                  <div className="flex justify-between p-2 rounded-lg bg-input/40 border border-border">
-                    <span className="text-muted-foreground">Trivial Tasks:</span>
-                    <span className="text-green-400 font-bold">100 pts</span>
-                  </div>
-                  <div className="flex justify-between p-2 rounded-lg bg-input/40 border border-border">
-                    <span className="text-muted-foreground">Medium Tasks:</span>
-                    <span className="text-yellow-400 font-bold">150 pts</span>
-                  </div>
-                  <div className="flex justify-between p-2 rounded-lg bg-input/40 border border-border">
-                    <span className="text-muted-foreground">High Complexity:</span>
-                    <span className="text-orange-400 font-bold">200 pts</span>
-                  </div>
-                </div>
-                <div className="pt-2">
-                  <a
-                    href="https://github.com/Sorobo-Gate/soroban-anchor-gate-app/issues?q=label%3Adrips-wave"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 transition"
-                  >
-                    <span>Browse Wave Sprint Issues</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-              </CardContent>
-            </Card>
-
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -943,7 +881,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-border/80 py-6 bg-card/40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
-          <span>SorobanAnchor Gate — Open-Source Stellar Wave Protocol</span>
+          <span>SorobanAnchor Gate — Non-Custodial Milestone Escrow & Anchor Bridge</span>
           <div className="flex items-center gap-4">
             <a
               href="https://github.com/Sorobo-Gate/soroban-anchor-gate-contract"
