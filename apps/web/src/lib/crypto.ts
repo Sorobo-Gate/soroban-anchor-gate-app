@@ -5,12 +5,22 @@ export async function hashRoutingInfo(routingInfo: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(routingInfo.trim());
 
-  let subtleCrypto: SubtleCrypto;
+  let subtleCrypto: SubtleCrypto | undefined;
   if (typeof globalThis !== "undefined" && globalThis.crypto?.subtle) {
     subtleCrypto = globalThis.crypto.subtle;
-  } else {
-    const nodeCrypto = await import("node:crypto");
-    subtleCrypto = (nodeCrypto.webcrypto as unknown as Crypto).subtle;
+  } else if (typeof window === "undefined") {
+    try {
+      const g = globalThis as unknown as { __non_webpack_require__?: (mod: string) => unknown };
+      const req = g.__non_webpack_require__ ?? (eval("require") as (mod: string) => unknown);
+      const nodeCrypto = req("crypto") as { webcrypto?: { subtle?: SubtleCrypto }; subtle?: SubtleCrypto };
+      subtleCrypto = nodeCrypto?.webcrypto?.subtle ?? nodeCrypto?.subtle;
+    } catch {
+      // Ignore fallback failure
+    }
+  }
+
+  if (!subtleCrypto) {
+    throw new Error("Cryptographic subtle digest is not available in the current runtime");
   }
 
   const hashBuffer = await subtleCrypto.digest("SHA-256", data);
