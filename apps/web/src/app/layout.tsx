@@ -1,20 +1,10 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "SOROBANANCHOR",
-  description: "SOROBANANCHOR",
+  title: "SorobanAnchor Gate — Milestone Escrow & Stellar Bridge",
+  description:
+    "Non-custodial milestone escrow, Freighter wallet signing, and automated off-chain anchor settlement bridge on Stellar.",
 };
 
 export default function RootLayout({
@@ -23,10 +13,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className="h-full antialiased font-sans">
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
