@@ -18,6 +18,7 @@ services/relay/relay
 *.log
 .DS_Store
 Thumbs.db
+.vscode/
 
 # Rust & Soroban build artifacts
 target/
@@ -25,3 +26,7 @@ contracts/target/
 *.wasm
 contracts/test_snapshots/
 test_snapshots/
+
+# Drips Wave Playbook (local reference only - not tracked in git)
+*PLAYBOOK*
+*playbook*
