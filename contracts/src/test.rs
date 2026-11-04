@@ -718,3 +718,185 @@ fn test_create_escrow_overflow_rejected() {
     );
     assert_eq!(res_overflow, Err(Ok(EscrowError::ArithmeticOverflow)));
 }
+
+#[test]
+fn test_whitelist_unauthorized_caller_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, _, _, token_client, _) = setup_test_env(&env, 10_000);
+    client.init(&admin, &treasury, &200);
+
+    let res = client.try_set_token_whitelist(&payer, &token_client.address, &true);
+    assert_eq!(res, Err(Ok(EscrowError::Unauthorized)));
+}
+
+#[test]
+fn test_whitelist_enforcement_and_unauthorized_token_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 20_000);
+    client.init(&admin, &treasury, &200);
+
+    // Create a second non-whitelisted token
+    let other_token_admin = Address::generate(&env);
+    let other_token_contract = env.register_stellar_asset_contract_v2(other_token_admin);
+    let other_token_admin_client = StellarAssetClient::new(&env, &other_token_contract.address());
+    let other_token_client = TokenClient::new(&env, &other_token_contract.address());
+    other_token_admin_client.mint(&payer, &10_000);
+
+    // Whitelist the primary token
+    assert!(client.is_token_whitelisted(&token_client.address));
+    client.set_token_whitelist(&admin, &token_client.address, &true);
+    assert!(client.is_token_whitelisted(&token_client.address));
+    assert!(!client.is_token_whitelisted(&other_token_client.address));
+
+    let profile_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    // Attempting escrow with non-whitelisted token must fail
+    let res_rejected = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &other_token_client.address,
+        &5_000,
+        &profile_hash,
+        &100,
+    );
+    assert_eq!(res_rejected, Err(Ok(EscrowError::TokenNotWhitelisted)));
+
+    // Escrow with whitelisted token must succeed
+    let res_ok = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &100,
+    );
+    assert!(res_ok.is_ok());
+}
+
+#[test]
+fn test_resolve_dispute_unauthorized_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 20_000);
+    client.init(&admin, &treasury, &200);
+
+    let profile_hash = BytesN::from_array(&env, &[9u8; 32]);
+    let escrow_id = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &100,
+    );
+
+    // Non-admin cannot resolve dispute
+    let res = client.try_resolve_dispute(&escrow_id, &payer, &5_000, &5_000);
+    assert_eq!(res, Err(Ok(EscrowError::Unauthorized)));
+}
+
+#[test]
+fn test_resolve_dispute_invalid_split_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 20_000);
+    client.init(&admin, &treasury, &200);
+
+    let profile_hash = BytesN::from_array(&env, &[9u8; 32]);
+    let escrow_id = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &100,
+    );
+
+    // Splits that don't sum to 10_000 must fail
+    let res_under = client.try_resolve_dispute(&escrow_id, &admin, &4_000, &5_000);
+    assert_eq!(res_under, Err(Ok(EscrowError::InvalidDisputeSplit)));
+
+    let res_over = client.try_resolve_dispute(&escrow_id, &admin, &6_000, &5_000);
+    assert_eq!(res_over, Err(Ok(EscrowError::InvalidDisputeSplit)));
+}
+
+#[test]
+fn test_resolve_dispute_success_split() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 10_000);
+    client.init(&admin, &treasury, &200);
+
+    let profile_hash = BytesN::from_array(&env, &[12u8; 32]);
+    let escrow_id = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &100,
+    );
+
+    assert_eq!(token_client.balance(&payer), 0);
+    assert_eq!(token_client.balance(&beneficiary), 0);
+    assert_eq!(token_client.balance(&contract_id), 10_000);
+
+    // Split 60% to payer (6000 bps) and 40% to beneficiary (4000 bps)
+    let res = client.try_resolve_dispute(&escrow_id, &admin, &6_000, &4_000);
+    assert!(res.is_ok());
+
+    assert_eq!(token_client.balance(&payer), 6_000);
+    assert_eq!(token_client.balance(&beneficiary), 4_000);
+    assert_eq!(token_client.balance(&contract_id), 0);
+
+    // Record should reflect Disputed status
+    let record = client.get_escrow(&escrow_id);
+    assert_eq!(record.status, EscrowStatus::Disputed);
+
+    // Further operations on disputed escrow must fail with InvalidStatus
+    let res_dup = client.try_resolve_dispute(&escrow_id, &admin, &5_000, &5_000);
+    assert_eq!(res_dup, Err(Ok(EscrowError::InvalidStatus)));
+}
+
+#[test]
+fn test_getters_and_metadata() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 10_000);
+    client.init(&admin, &treasury, &250);
+
+    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_treasury(), treasury);
+    assert_eq!(client.get_fee_bps(), 250);
+    assert_eq!(client.get_counter(), 0);
+
+    let profile_hash = BytesN::from_array(&env, &[25u8; 32]);
+    let escrow_id = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &500,
+    );
+
+    assert_eq!(client.get_counter(), 1);
+    let record = client.get_escrow(&escrow_id);
+    assert_eq!(record.payer, payer);
+    assert_eq!(record.beneficiary, beneficiary);
+    assert_eq!(record.amount, 5_000);
+    assert_eq!(record.status, EscrowStatus::Funded);
+}
