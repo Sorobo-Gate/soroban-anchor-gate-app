@@ -34,7 +34,7 @@ func main() {
 		apiPort = "8080"
 	}
 
-	var startLedger uint32 = 1
+	var startLedger uint32 = 0
 	if s := os.Getenv("START_LEDGER"); s != "" {
 		if val, err := strconv.ParseUint(s, 10, 32); err == nil {
 			startLedger = uint32(val)

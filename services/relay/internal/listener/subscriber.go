@@ -12,7 +12,9 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/soroban-anchor-gate/relay/internal/store"
@@ -71,6 +73,40 @@ type GetEventsResult struct {
 	LatestLedger uint32      `json:"latestLedger"`
 }
 
+type LatestLedgerResult struct {
+	ID              string `json:"id"`
+	ProtocolVersion uint32 `json:"protocolVersion"`
+	Sequence        uint32 `json:"sequence"`
+}
+
+type LatestLedgerResponse struct {
+	JSONRPC string             `json:"jsonrpc"`
+	ID      int                `json:"id"`
+	Result  LatestLedgerResult `json:"result"`
+	Error   *RPCError          `json:"error,omitempty"`
+}
+
+var ledgerRangeRegex = regexp.MustCompile(`ledger range:\s*(\d+)`)
+
+func isLedgerRangeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "startLedger must be within the ledger range") ||
+		(strings.Contains(msg, "-32600") && strings.Contains(msg, "ledger range"))
+}
+
+func parseMinLedgerFromRangeError(errMsg string) uint32 {
+	matches := ledgerRangeRegex.FindStringSubmatch(errMsg)
+	if len(matches) >= 2 {
+		if val, err := strconv.ParseUint(matches[1], 10, 32); err == nil {
+			return uint32(val)
+		}
+	}
+	return 0
+}
+
 type EventItem struct {
 	ID                       string     `json:"id"`
 	Type                     string     `json:"type"`
@@ -98,6 +134,19 @@ func NewEventSubscriber(rpcURL, contractID string, st store.IdempotencyStore, lo
 }
 
 func (s *EventSubscriber) PollEvents(ctx context.Context, eventChan chan<- EventPayload) error {
+	currentLedger := s.store.GetCursor()
+
+	// If the cursor is uninitialized (<= 1), initialize from the live network tip
+	if currentLedger <= 1 {
+		latest, err := s.GetLatestLedger(ctx)
+		if err != nil {
+			s.logger.Warn("Failed to fetch initial latest ledger from RPC, will attempt with default cursor", "cursor", currentLedger, "error", err)
+		} else {
+			s.logger.Info("Initialized ledger cursor from live network tip", "latest_ledger", latest)
+			_ = s.store.SetCursor(latest)
+		}
+	}
+
 	s.logger.Info("Starting Soroban RPC event polling", "contract_id", s.contractID, "start_ledger", s.store.GetCursor())
 
 	ticker := time.NewTicker(4 * time.Second)
@@ -111,6 +160,27 @@ func (s *EventSubscriber) PollEvents(ctx context.Context, eventChan chan<- Event
 			currentLedger := s.store.GetCursor()
 			events, latestLedger, err := s.fetchEventsFromRPC(ctx, currentLedger)
 			if err != nil {
+				// Handle historical cursor falling behind Soroban RPC retention window
+				if isLedgerRangeError(err) {
+					s.logger.Warn("Stored ledger cursor is outside RPC node retention window; auto-recovering cursor",
+						"outdated_cursor", currentLedger,
+						"rpc_error", err.Error(),
+					)
+
+					newLedger := parseMinLedgerFromRangeError(err.Error())
+					if newLedger == 0 {
+						if latest, lErr := s.GetLatestLedger(ctx); lErr == nil {
+							newLedger = latest
+						}
+					}
+
+					if newLedger > 0 {
+						s.logger.Info("Fast-forwarded ledger cursor to valid RPC window", "new_cursor", newLedger)
+						_ = s.store.SetCursor(newLedger)
+					}
+					continue
+				}
+
 				s.logger.Error("Failed to fetch events from RPC", "error", err)
 				continue
 			}
@@ -149,6 +219,51 @@ func (s *EventSubscriber) PollEvents(ctx context.Context, eventChan chan<- Event
 			}
 		}
 	}
+}
+
+func (s *EventSubscriber) GetLatestLedger(ctx context.Context) (uint32, error) {
+	reqBody := RPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "getLatestLedger",
+	}
+
+	jsonBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return 0, fmt.Errorf("marshal getLatestLedger error: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", s.rpcURL, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return 0, fmt.Errorf("create HTTP request error: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("getLatestLedger HTTP call error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("read getLatestLedger body error: %w", err)
+	}
+
+	var rpcResp LatestLedgerResponse
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		return 0, fmt.Errorf("unmarshal getLatestLedger response error: %w", err)
+	}
+
+	if rpcResp.Error != nil {
+		return 0, fmt.Errorf("RPC error code %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+	}
+
+	if rpcResp.Result.Sequence == 0 {
+		return 0, fmt.Errorf("received empty latest ledger sequence")
+	}
+
+	return rpcResp.Result.Sequence, nil
 }
 
 func (s *EventSubscriber) fetchEventsFromRPC(ctx context.Context, startLedger uint32) ([]EventItem, uint32, error) {
