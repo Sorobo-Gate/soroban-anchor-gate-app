@@ -1,6 +1,6 @@
 # Smart Contract Parity Specification
 
-This document details the function, argument, type, event, and state parity between the authoritative Soroban contract repository [`Sorobo-Gate/soroban-anchor-gate-contract`](https://github.com/Sorobo-Gate/soroban-anchor-gate-contract) and this application repository (`apps/web`, `packages/contract-client`, `services/relay`).
+This document details the function, argument, type, event, and state parity between the authoritative Soroban contract natively maintained in [`contracts/`](../contracts/) and this application repository's layers (`apps/web`, `packages/contract-client`, `services/relay`).
 
 ---
 
@@ -12,18 +12,23 @@ This document details the function, argument, type, event, and state parity betw
 | `create_escrow` | `payer: Address`, `beneficiary: Address`, `token: Address`, `amount: i128`, `lock_duration: u64`, `profile_hash: BytesN<32>` | `buildCreateEscrowTx({ payer, beneficiary, token, amount, lockDurationSeconds, profileHashHex })` | Locks token deposit in escrow with 32-byte profile commitment |
 | `release_to_anchor` | `escrow_id: u64`, `caller: Address`, `anchor_disbursement_address: Address` | `buildReleaseToAnchorTx({ escrowId, caller, anchorDisbursementAddress })` | Releases escrow funds to anchor disbursement address |
 | `refund` | `escrow_id: u64` | `buildRefundTx(escrowId)` | Refunds locked escrow to payer after lock duration expires |
+| `resolve_dispute` | `escrow_id: u64`, `caller: Address`, `payer_bps: u32`, `beneficiary_bps: u32` | `buildResolveDisputeTx({ escrowId, caller, payerBps, beneficiaryBps })` | Mediates dispute by splitting funds between payer and beneficiary |
+| `set_token_whitelist` | `caller: Address`, `token: Address`, `whitelisted: bool` | `buildSetTokenWhitelistTx({ caller, token, whitelisted })` | Admin controls asset whitelist for deposits |
+| `is_token_whitelisted` | `token: Address` | `buildIsTokenWhitelistedTx(token)` | Queries whether a token address is approved for escrow deposits |
+| `get_escrow` | `escrow_id: u64` | `buildGetEscrowTx(escrowId)` | Fetches the onchain escrow record by ID |
 
 ---
 
 ## 2. Onchain Escrow State Lifecycle
 
-The smart contract uses three explicit state variants:
+The smart contract uses four explicit state variants:
 
 ```mermaid
 stateDiagram-v2
     [*] --> Funded: create_escrow
     Funded --> Disbursed: release_to_anchor
     Funded --> Refunded: refund (after lock_duration)
+    Funded --> Disputed: resolve_dispute
 ```
 
 | State Variant | Description | UI Representation |
@@ -31,6 +36,7 @@ stateDiagram-v2
 | `Funded` | Tokens locked in escrow contract | `Funded` |
 | `Disbursed` | Escrow released to anchor for off-ramp payout | `Disbursed` |
 | `Refunded` | Escrow returned to depositor after timelock | `Refunded` |
+| `Disputed` | Escrow split and settled by designated arbiter | `Disputed` |
 
 > ⚠️ **State Correction**: The app previously rendered `Funded → Disbursed → Settled`. The contract contains **no `Settled` variant**. The frontend status display strictly reflects `Funded → Disbursed → Refunded`.
 
