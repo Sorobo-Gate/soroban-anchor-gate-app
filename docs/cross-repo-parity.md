@@ -1,6 +1,6 @@
-# Cross-Repository Parity Matrix
+# Cross-Component Parity Matrix
 
-This matrix compares exact smart contract functions and data types in [`Sorobo-Gate/soroban-anchor-gate-contract`](https://github.com/Sorobo-Gate/soroban-anchor-gate-contract) against the application components in `Sorobo-Gate/soroban-anchor-gate-app`.
+This matrix compares exact smart contract functions and data types natively maintained in [`contracts/`](../contracts/) against the client and service layers in `Sorobo-Gate/soroban-anchor-gate-app`.
 
 ---
 
