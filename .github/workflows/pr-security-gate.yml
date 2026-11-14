@@ -1,0 +1,566 @@
+###############################################################################
+# PR Security Gate — SorobanAnchor Gate
+# =============================================================================
+# This workflow runs on every pull_request to develop/main and enforces:
+#
+#   1. ISSUE COMPLIANCE & SCOPE VERIFICATION:
+#      - PR must reference a valid, open, assigned issue.
+#      - Contributor must be the approved assignee.
+#      - Branch name must follow convention.
+#      - PR scope verification: Changed files are cross-referenced with the
+#        issue description & target architecture layer (e.g. if the issue is
+#        contracts-only, modifying web or CI is flagged/blocked).
+#   2. MALICIOUS CODE SCAN:
+#      - Reverse shells, eval+remote code fetch, miners, keyloggers,
+#        exfiltration endpoints, unsafe process calls in Rust/Go.
+#      - Leaked private keys (Stellar S... keys, secrets).
+#      - Dependency injection / typosquatting / malicious lifecycle hooks.
+#      - File anomalies (binaries, oversized payloads).
+#      - CI/CD workflow tampering.
+#   3. VERDICT:
+#      - If malicious code or out-of-scope/unapproved work is found,
+#        auto-close the PR with detailed forensic reason.
+#      - If clean, mark with 'security-passed' and await human review.
+###############################################################################
+
+name: "🛡️ PR Security Gate"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [develop, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: pr-security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Issue Compliance & Scope Verification
+  # ═══════════════════════════════════════════════════════════════════════════
+  issue-compliance:
+    name: "📋 Issue Compliance & Scope Check"
+    runs-on: ubuntu-latest
+    outputs:
+      linked_issue: ${{ steps.check.outputs.linked_issue }}
+      is_compliant: ${{ steps.check.outputs.is_compliant }}
+      failure_reason: ${{ steps.check.outputs.failure_reason }}
+      issue_title: ${{ steps.check.outputs.issue_title }}
+      issue_layer: ${{ steps.check.outputs.issue_layer }}
+      scope_report: ${{ steps.check.outputs.scope_report }}
+    steps:
+      - name: Validate PR ↔ Issue linkage and Scope
+        id: check
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const prAuthor = pr.user.login;
+            const prBody = pr.body || '';
+            const prTitle = pr.title || '';
+            const branchName = pr.head.ref || '';
+
+            console.log(`🔍 Checking PR #${pr.number} by @${prAuthor}`);
+            console.log(`   Branch: ${branchName}`);
+
+            // ── Maintainer / Release Bypass ────────────────────────────────
+            // Repo owner (@emarkees) or develop->main release PRs bypass issue-linking requirements
+            const isMaintainer = prAuthor.toLowerCase() === context.repo.owner.toLowerCase() || prAuthor.toLowerCase() === 'emarkees';
+            const isReleasePR = branchName === 'develop' && pr.base.ref === 'main';
+
+            if (isMaintainer || isReleasePR) {
+              console.log(`👑 Maintainer/Release PR detected for @${prAuthor}. Issue assignment requirement bypassed.`);
+              core.setOutput('is_compliant', 'true');
+              core.setOutput('linked_issue', isReleasePR ? 'release-sync' : 'maintainer-branch');
+              core.setOutput('issue_title', isReleasePR ? 'Release Sync: develop -> main' : 'Maintainer Direct Update');
+              core.setOutput('issue_layer', 'all');
+              core.setOutput('scope_report', 'Maintainer / Release PR: authorized full repository access.');
+              core.setOutput('failure_reason', '');
+              return;
+            }
+
+            // ── Step 1: Extract issue references ──────────────────────────
+            const issuePatterns = [
+              /(?:closes|fixes|resolves)\s+#(\d+)/gi,
+              /(?:close|fix|resolve)\s+#(\d+)/gi,
+              /\bLinked Issue:\s*(?:Closes\s+)?#(\d+)/gi,
+            ];
+
+            const issueNumbers = new Set();
+            for (const pattern of issuePatterns) {
+              let match;
+              while ((match = pattern.exec(prBody)) !== null) {
+                issueNumbers.add(parseInt(match[1]));
+              }
+              pattern.lastIndex = 0;
+              while ((match = pattern.exec(prTitle)) !== null) {
+                issueNumbers.add(parseInt(match[1]));
+              }
+            }
+
+            const branchMatch = branchName.match(/^wave\/(\d+)/);
+            if (branchMatch) {
+              issueNumbers.add(parseInt(branchMatch[1]));
+            }
+
+            if (issueNumbers.size === 0) {
+              core.setOutput('is_compliant', 'false');
+              core.setOutput('linked_issue', '');
+              core.setOutput('failure_reason',
+                '❌ **No linked issue found.** Your PR must reference an approved GitHub issue ' +
+                '(e.g., `Closes #42` in description) and branch must follow `wave/<issue-number>-<short-description>`.');
+              return;
+            }
+
+            console.log(`   Referenced issue candidates: ${[...issueNumbers].join(', ')}`);
+
+            // ── Step 2: Validate Issue Assignment & Fetch Description ─────
+            let validIssue = null;
+            let issueData = null;
+            const errors = [];
+
+            for (const issueNum of issueNumbers) {
+              try {
+                const res = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNum,
+                });
+                const iss = res.data;
+
+                if (iss.pull_request) {
+                  errors.push(`#${issueNum} is a pull request, not an issue.`);
+                  continue;
+                }
+
+                if (iss.state !== 'open') {
+                  errors.push(`#${issueNum} is closed. Contributions for closed issues are rejected.`);
+                  continue;
+                }
+
+                const assignees = iss.assignees.map(a => a.login.toLowerCase());
+                if (!assignees.includes(prAuthor.toLowerCase())) {
+                  errors.push(
+                    `#${issueNum} is not assigned to @${prAuthor}. ` +
+                    `Assigned to: ${assignees.length ? assignees.map(a => '@' + a).join(', ') : 'none'}. ` +
+                    `You must be approved & assigned to the issue before working on it.`
+                  );
+                  continue;
+                }
+
+                validIssue = issueNum;
+                issueData = iss;
+                break;
+              } catch (err) {
+                errors.push(`Issue #${issueNum} query failed: ${err.message}`);
+              }
+            }
+
+            if (!validIssue || !issueData) {
+              core.setOutput('is_compliant', 'false');
+              core.setOutput('linked_issue', '');
+              core.setOutput('failure_reason', '❌ **Issue compliance check failed:**\n' + errors.map(e => `- ${e}`).join('\n'));
+              return;
+            }
+
+            // ── Step 3: Branch naming check ──────────────────────────────
+            const branchRegex = /^wave\/\d+-[\w-]+$/;
+            let branchNotice = '';
+            if (!branchRegex.test(branchName)) {
+              branchNotice = `\n⚠️ **Branch naming notice:** Branch \`${branchName}\` does not strictly follow \`wave/<issue>-<short-description>\`.`;
+            }
+
+            // ── Step 4: Issue Scope Extraction ───────────────────────────
+            const issueBody = issueData.body || '';
+            const issueTitle = issueData.title || '';
+
+            // Detect target layer declared in issue template if present
+            let targetLayer = 'all';
+            if (issueBody.includes('Smart Contracts (contracts/)')) targetLayer = 'contracts';
+            else if (issueBody.includes('Frontend Web App (apps/web/)')) targetLayer = 'web';
+            else if (issueBody.includes('Contract Client SDK (packages/contract-client/)')) targetLayer = 'sdk';
+            else if (issueBody.includes('Relay Daemon (services/relay/)')) targetLayer = 'relay';
+            else if (issueBody.includes('Documentation & Evidence (docs/, evidence/)')) targetLayer = 'docs';
+
+            // ── Step 5: Check PR Changed Files Against Allowed Scope ─────
+            const prFiles = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const changedPaths = prFiles.map(f => f.filename);
+            const forbiddenFiles = [];
+            const outOfScopeFiles = [];
+
+            for (const path of changedPaths) {
+              // Strict critical boundaries: contributors should never silently modify CI or deployment unless assigned devops
+              if (path.startsWith('.github/workflows/') || path.startsWith('.github/CODEOWNERS')) {
+                if (targetLayer !== 'all' && !issueTitle.toLowerCase().includes('ci') && !issueTitle.toLowerCase().includes('workflow')) {
+                  forbiddenFiles.push(path);
+                }
+              }
+
+              // Layer check: if issue was strictly defined for one component, flag extraneous modifications
+              if (targetLayer === 'contracts') {
+                if (!path.startsWith('contracts/') && !path.startsWith('evidence/') && !path.endsWith('.md')) {
+                  outOfScopeFiles.push(path);
+                }
+              } else if (targetLayer === 'web') {
+                if (!path.startsWith('apps/web/') && !path.endsWith('.md')) {
+                  outOfScopeFiles.push(path);
+                }
+              } else if (targetLayer === 'sdk') {
+                if (!path.startsWith('packages/contract-client/') && !path.endsWith('.md')) {
+                  outOfScopeFiles.push(path);
+                }
+              } else if (targetLayer === 'relay') {
+                if (!path.startsWith('services/relay/') && !path.endsWith('.md')) {
+                  outOfScopeFiles.push(path);
+                }
+              } else if (targetLayer === 'docs') {
+                if (!path.endsWith('.md') && !path.startsWith('docs/') && !path.startsWith('evidence/')) {
+                  outOfScopeFiles.push(path);
+                }
+              }
+            }
+
+            if (forbiddenFiles.length > 0) {
+              core.setOutput('is_compliant', 'false');
+              core.setOutput('linked_issue', String(validIssue));
+              core.setOutput('failure_reason',
+                `🚨 **Critical Scope Violation:** PR modifies repository infrastructure / security files not authorized by issue #${validIssue}:\n` +
+                forbiddenFiles.map(f => `- \`${f}\``).join('\n'));
+              return;
+            }
+
+            let scopeReport = `Target layer verified: **${targetLayer}**. ${changedPaths.length} files changed.`;
+            if (outOfScopeFiles.length > 0) {
+              scopeReport += `\n⚠️ **Notice (Potential scope creep):** The following files are outside the target layer \`${targetLayer}\`:\n` +
+                outOfScopeFiles.slice(0, 10).map(f => `- \`${f}\``).join('\n');
+            }
+
+            core.setOutput('is_compliant', 'true');
+            core.setOutput('linked_issue', String(validIssue));
+            core.setOutput('issue_title', issueTitle);
+            core.setOutput('issue_layer', targetLayer);
+            core.setOutput('scope_report', scopeReport);
+            core.setOutput('failure_reason', branchNotice);
+            console.log(`✅ Issue compliance & scope verified against issue #${validIssue}`);
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Multi-layer malicious code scanner
+  # ═══════════════════════════════════════════════════════════════════════════
+  malware-scan:
+    name: "🔬 Malicious Code Scanner"
+    runs-on: ubuntu-latest
+    outputs:
+      is_clean: ${{ steps.verdict.outputs.is_clean }}
+      scan_report: ${{ steps.verdict.outputs.scan_report }}
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # ── Layer 1: Pattern-based malware detection ────────────────────────
+      - name: "Layer 1 — Pattern-based malware scan"
+        id: pattern_scan
+        run: |
+          echo "🔍 Running pattern-based malware scan..."
+
+          FINDINGS=""
+          FOUND=0
+
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD)
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ ! -f "$file" ] && continue
+
+            case "$file" in
+              *.lock|*.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff|*.woff2|*.ttf|*.eot|*.svg)
+                continue ;;
+              *node_modules/*|*.git/*)
+                continue ;;
+            esac
+
+            CONTENT=$(cat "$file" 2>/dev/null || true)
+            [ -z "$CONTENT" ] && continue
+
+            # Reverse shells & arbitrary command execution in JS/TS
+            if echo "$CONTENT" | grep -Pn '(child_process|spawn|exec)\s*\(.*\b(bash|sh|cmd|powershell|curl|wget|nc|ncat)\b' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Potential reverse shell or arbitrary command execution"
+              FOUND=1
+            fi
+
+            # Remote code evaluation
+            if echo "$CONTENT" | grep -Pn 'eval\s*\(\s*(fetch|require\s*\(\s*["\x27]https?:)' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Remote code evaluation via eval(fetch(...))"
+              FOUND=1
+            fi
+
+            # Obfuscated long base64 strings
+            if echo "$CONTENT" | grep -Pn '[A-Za-z0-9+/=]{250,}' 2>/dev/null | head -5; then
+              if [[ "$file" != *"lock"* && "$file" != *".wasm"* ]]; then
+                FINDINGS="${FINDINGS}\n⚠️ **SUSPICIOUS** [\`$file\`]: Unusually long base64/encoded string (obfuscation risk)"
+                FOUND=1
+              fi
+            fi
+
+            # Crypto mining indicators
+            if echo "$CONTENT" | grep -Pni '(coinhive|cryptonight|stratum\+tcp|xmrig|minergate|crypto-?loot|coin-?imp)' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Cryptocurrency mining code detected"
+              FOUND=1
+            fi
+
+            # Known data exfiltration hooks
+            if echo "$CONTENT" | grep -Pn '(webhook\.site|ngrok\.io|burpcollaborator|requestbin|pipedream)' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Known exfiltration destination endpoint detected"
+              FOUND=1
+            fi
+
+            # Keylogger hooks
+            if echo "$CONTENT" | grep -Pn '(addEventListener\s*\(\s*["\x27]key(down|press|up)["\x27].*XMLHttpRequest|onkey(down|press|up).*fetch\s*\()' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Keylogging hook detected"
+              FOUND=1
+            fi
+
+            # Malicious npm lifecycle script in package.json
+            if [[ "$file" == *"package.json" ]]; then
+              if echo "$CONTENT" | grep -Pn '"(preinstall|postinstall|preuninstall)"\s*:\s*".*\b(curl|wget|bash|sh|powershell|node\s+-e)\b' 2>/dev/null; then
+                FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Suspicious automated npm install hook executing shell/network commands"
+                FOUND=1
+              fi
+            fi
+
+            # Unsafe external process execution in Rust contracts
+            if [[ "$file" == contracts/* ]]; then
+              if echo "$CONTENT" | grep -Pn '(std::process|Command::new|std::net)' 2>/dev/null; then
+                FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Smart contracts must never invoke std::process, Command or std::net"
+                FOUND=1
+              fi
+            fi
+
+            # Go suspicious process execution
+            if [[ "$file" == services/relay/* ]]; then
+              if echo "$CONTENT" | grep -Pn 'os/exec.*Cmd.*\b(bash|sh|curl|wget|nc)\b' 2>/dev/null; then
+                FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Go relay daemon executing suspicious external shell commands"
+                FOUND=1
+              fi
+            fi
+
+            # Hardcoded Stellar Secret Keys (starts with S, 56 chars)
+            if echo "$CONTENT" | grep -Pn '\bS[A-Z2-7]{55}\b' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Stellar Private/Secret Key (S...) detected"
+              FOUND=1
+            fi
+
+            # Generic hardcoded credentials
+            if echo "$CONTENT" | grep -Pn '(PRIVATE[_\s]?KEY|SECRET[_\s]?KEY|AWS_SECRET)\s*[:=]\s*["\x27][A-Za-z0-9+/=]{20,}' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Hardcoded private credentials found"
+              FOUND=1
+            fi
+
+          done <<< "$CHANGED_FILES"
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo "is_clean=false" >> $GITHUB_OUTPUT
+            FINDINGS_ESCAPED=$(echo -e "$FINDINGS" | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "findings=$FINDINGS_ESCAPED" >> $GITHUB_OUTPUT
+          else
+            echo "is_clean=true" >> $GITHUB_OUTPUT
+            echo "findings=" >> $GITHUB_OUTPUT
+            echo "✅ No malware patterns detected."
+          fi
+
+      # ── Layer 2: Gitleaks Secret Scanner ────────────────────────────────
+      - name: "Layer 2 — Secret scanning (Gitleaks)"
+        id: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Layer 3: File Type & Binary Checks ──────────────────────────────
+      - name: "Layer 3 — Binary & Payload checks"
+        id: file_check
+        run: |
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD)
+          FILE_FINDINGS=""
+          FILE_FOUND=0
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ ! -f "$file" ] && continue
+
+            case "$file" in
+              *.exe|*.dll|*.so|*.dylib|*.bat|*.cmd|*.msi|*.scr|*.pif|*.jar|*.class)
+                FILE_FINDINGS="${FILE_FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Executable binary / dropper committed"
+                FILE_FOUND=1
+                ;;
+            esac
+
+            FILE_SIZE=$(stat -f%z "$file" 2>/dev/null || stat --printf="%s" "$file" 2>/dev/null || echo "0")
+            if [ "$FILE_SIZE" -gt 3145728 ]; then
+              FILE_FINDINGS="${FILE_FINDINGS}\n⚠️ **SUSPICIOUS** [\`$file\`]: File size exceeds 3MB ($(numfmt --to=iec $FILE_SIZE))"
+              FILE_FOUND=1
+            fi
+          done <<< "$CHANGED_FILES"
+
+          if [ "$FILE_FOUND" -eq 1 ]; then
+            echo "is_clean=false" >> $GITHUB_OUTPUT
+            FILE_ESCAPED=$(echo -e "$FILE_FINDINGS" | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "findings=$FILE_ESCAPED" >> $GITHUB_OUTPUT
+          else
+            echo "is_clean=true" >> $GITHUB_OUTPUT
+            echo "findings=" >> $GITHUB_OUTPUT
+            echo "✅ File types clean."
+          fi
+
+      # ── Verdict ─────────────────────────────────────────────────────────
+      - name: "🏛️ Malicious Code Verdict"
+        id: verdict
+        run: |
+          CLEAN=true
+          REPORT=""
+
+          if [ "${{ steps.pattern_scan.outputs.is_clean }}" != "true" ]; then
+            CLEAN=false
+            REPORT="${REPORT}\n### 🔬 Pattern Scan\n${{ steps.pattern_scan.outputs.findings }}"
+          fi
+
+          if [ "${{ steps.gitleaks.outcome }}" == "failure" ]; then
+            CLEAN=false
+            REPORT="${REPORT}\n### 🔑 Secret Leak Detection\n🚨 Gitleaks detected leaked credentials or keys in the branch."
+          fi
+
+          if [ "${{ steps.file_check.outputs.is_clean }}" != "true" ]; then
+            CLEAN=false
+            REPORT="${REPORT}\n### 📄 Binary/Payload Anomalies\n${{ steps.file_check.outputs.findings }}"
+          fi
+
+          echo "is_clean=$CLEAN" >> $GITHUB_OUTPUT
+          if [ "$CLEAN" == "true" ]; then
+            echo "scan_report=✅ All malicious code inspection layers passed clean." >> $GITHUB_OUTPUT
+          else
+            ESCAPED=$(echo -e "$REPORT" | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "scan_report=$ESCAPED" >> $GITHUB_OUTPUT
+          fi
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 3 — Final Decision Gate
+  # ═══════════════════════════════════════════════════════════════════════════
+  security-gate:
+    name: "🚦 Security Gate Decision"
+    needs: [issue-compliance, malware-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: "Enforce Gate: Report & Auto-Close if Malicious/Non-compliant"
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
+            const prAuthor = pr.user.login;
+
+            const issueCompliant = '${{ needs.issue-compliance.outputs.is_compliant }}' === 'true';
+            const scanClean = '${{ needs.malware-scan.outputs.is_clean }}' === 'true';
+            const issueReason = `${{ needs.issue-compliance.outputs.failure_reason }}`;
+            const scanReport = `${{ needs.malware-scan.outputs.scan_report }}`;
+            const linkedIssue = '${{ needs.issue-compliance.outputs.linked_issue }}';
+            const issueTitle = `${{ needs.issue-compliance.outputs.issue_title }}`;
+            const scopeReport = `${{ needs.issue-compliance.outputs.scope_report }}`;
+            const timestamp = new Date().toISOString();
+
+            if (!issueCompliant || !scanClean) {
+              let body = `## 🚨 PR Security Gate — REJECTED & CLOSED\n\n`;
+              body += `**PR:** #${prNumber} by @${prAuthor}\n`;
+              body += `**Time:** ${timestamp}\n\n`;
+              body += `---\n\n`;
+
+              if (!issueCompliant) {
+                body += `### 📋 Issue & Scope Compliance Failure\n${issueReason}\n\n`;
+              }
+              if (!scanClean) {
+                body += `### 🔬 Malicious Code & Threat Findings\n${scanReport}\n\n`;
+              }
+
+              body += `---\n`;
+              body += `> ⛔ **This PR has been automatically closed** to defend the repository against unauthorized or malicious additions.\n`;
+              body += `> If you believe this is an error, please reach out directly to the maintainer @emarkees.\n`;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body,
+              });
+
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                state: 'closed',
+              });
+
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  labels: ['security-rejected'],
+                });
+              } catch (e) {}
+
+              core.setFailed(`PR #${prNumber} rejected and auto-closed.`);
+            } else {
+              let body = `## 🛡️ PR Security Gate — PASSED ✅\n\n`;
+              body += `**PR:** #${prNumber} by @${prAuthor}\n`;
+              body += `**Linked Issue:** #${linkedIssue} - *${issueTitle}*\n`;
+              body += `**Time:** ${timestamp}\n\n`;
+              body += `---\n\n`;
+              body += `### 🔍 Automated Verification Results:\n`;
+              body += `- ✅ **Approved Issue Assignment:** Verified @${prAuthor} is approved assignee for #${linkedIssue}.\n`;
+              body += `- ✅ **Scope Check:** ${scopeReport}\n`;
+              body += `- ✅ **Malware Scan:** Clean (no reverse shells, miners, keyloggers, exfiltration).\n`;
+              body += `- ✅ **Secret Leak Scan:** Clean (no Stellar S-keys or credentials).\n`;
+              body += `- ✅ **Integrity:** No unauthorized binary droppers or CI modifications.\n\n`;
+              body += `> ⏳ **Ready for maintainer manual review** (@emarkees). Continuous Integration tests can proceed.`;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body,
+              });
+
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  labels: ['security-passed'],
+                });
+              } catch (e) {}
+
+              console.log(`✅ PR #${prNumber} passed security gate.`);
+            }

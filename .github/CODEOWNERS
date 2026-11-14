@@ -1,0 +1,36 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# CODEOWNERS — SorobanAnchor Gate
+# ═══════════════════════════════════════════════════════════════════════════
+# These owners are REQUIRED reviewers for all PRs touching their paths.
+# GitHub will auto-request reviews from them.
+#
+# IMPORTANT: Replace @emarkees with actual maintainer handles.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Global fallback (everything not covered below) ────────────────────────
+*                           @emarkees
+
+# ── Critical: CI/CD & GitHub config (highest priority) ───────────────────
+.github/                    @emarkees
+.github/workflows/          @emarkees
+Makefile                    @emarkees
+docker-compose.yml          @emarkees
+deployment/                 @emarkees
+
+# ── Smart Contracts (Rust / Soroban) ─────────────────────────────────────
+contracts/                  @emarkees
+
+# ── Frontend (Next.js) ──────────────────────────────────────────────────
+apps/web/                   @emarkees
+
+# ── Contract Client SDK (TypeScript) ────────────────────────────────────
+packages/contract-client/   @emarkees
+
+# ── Relay Daemon (Go) ──────────────────────────────────────────────────
+services/relay/             @emarkees
+
+# ── Security-sensitive files ─────────────────────────────────────────────
+SECURITY.md                 @emarkees
+.env.example                @emarkees
+install.sh                  @emarkees
+scripts/                    @emarkees
