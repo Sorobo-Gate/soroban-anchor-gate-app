@@ -56,7 +56,7 @@ jobs:
     steps:
       - name: Validate PR ↔ Issue linkage and Scope
         id: check
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -475,7 +475,7 @@ jobs:
     if: always()
     steps:
       - name: "Enforce Gate: Report & Auto-Close if Malicious/Non-compliant"
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
