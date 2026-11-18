@@ -7,10 +7,12 @@ mod types;
 mod test;
 
 use crate::errors::EscrowError;
-use crate::types::{DataKey, EscrowRecord, EscrowStatus};
+use crate::types::{DataKey, EscrowRecord, EscrowStatus, PlatformSettings};
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol};
 
 const BPS_DIVISOR: i128 = 10_000;
+const MAX_FEE_BPS: u32 = 1_000;
+const MAX_KEEPER_BOUNTY_BPS: u32 = 1_000;
 const PERSISTENT_EXTEND_TTL_THRESHOLD: u32 = 100_000;
 const PERSISTENT_EXTEND_TTL_AMOUNT: u32 = 200_000;
 const INSTANCE_EXTEND_TTL_THRESHOLD: u32 = 100_000;
@@ -30,7 +32,7 @@ impl EscrowGate {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::AlreadyInitialized);
         }
-        if fee_bps > 1000 {
+        if fee_bps > MAX_FEE_BPS {
             return Err(EscrowError::InvalidBps);
         }
 
@@ -39,6 +41,9 @@ impl EscrowGate {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Treasury, &treasury);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::KeeperBountyBps, &0u32);
         env.storage().instance().set(&DataKey::EscrowCounter, &0u64);
         env.storage()
             .instance()
@@ -226,6 +231,120 @@ impl EscrowGate {
         Ok(())
     }
 
+    pub fn claim_refund(env: Env, escrow_id: u64, caller: Address) -> Result<(), EscrowError> {
+        caller.require_auth();
+
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        let key = DataKey::Escrow(escrow_id);
+        let mut record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        if env.ledger().timestamp() < record.unlock_timestamp {
+            return Err(EscrowError::UnlockTimeNotReached);
+        }
+
+        let keeper_bounty_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::KeeperBountyBps)
+            .unwrap_or(0);
+
+        let keeper_bounty = if caller != record.payer && keeper_bounty_bps > 0 {
+            record
+                .amount
+                .checked_mul(keeper_bounty_bps as i128)
+                .ok_or(EscrowError::ArithmeticOverflow)?
+                / BPS_DIVISOR
+        } else {
+            0
+        };
+
+        let payer_refund = record
+            .amount
+            .checked_sub(keeper_bounty)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+
+        record.status = EscrowStatus::Refunded;
+        env.storage().persistent().set(&key, &record);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_EXTEND_TTL_THRESHOLD,
+            PERSISTENT_EXTEND_TTL_AMOUNT,
+        );
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        let token_client = token::Client::new(&env, &record.token);
+        let contract_address = env.current_contract_address();
+
+        if keeper_bounty > 0 {
+            token_client.transfer(&contract_address, &caller, &keeper_bounty);
+        }
+
+        if payer_refund > 0 {
+            token_client.transfer(&contract_address, &record.payer, &payer_refund);
+        }
+
+        env.events()
+            .publish((Symbol::new(&env, "refunded"), escrow_id), payer_refund);
+
+        if keeper_bounty > 0 {
+            env.events().publish(
+                (Symbol::new(&env, "keeper_bounty"), escrow_id),
+                (caller, keeper_bounty),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn set_keeper_bounty_bps(
+        env: Env,
+        caller: Address,
+        keeper_bounty_bps: u32,
+    ) -> Result<(), EscrowError> {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
+
+        if caller != admin {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        if keeper_bounty_bps > MAX_KEEPER_BOUNTY_BPS {
+            return Err(EscrowError::InvalidBps);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::KeeperBountyBps, &keeper_bounty_bps);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events().publish(
+            (Symbol::new(&env, "keeper_bounty_updated"), caller),
+            keeper_bounty_bps,
+        );
+
+        Ok(())
+    }
+
     pub fn set_token_whitelist(
         env: Env,
         caller: Address,
@@ -385,5 +504,38 @@ impl EscrowGate {
 
     pub fn get_fee_bps(env: Env) -> u32 {
         env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+    }
+
+    pub fn get_keeper_bounty_bps(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::KeeperBountyBps)
+            .unwrap_or(0)
+    }
+
+    pub fn get_settings(env: Env) -> Result<PlatformSettings, EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
+        let treasury: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Treasury)
+            .ok_or(EscrowError::NotInitialized)?;
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
+        let keeper_bounty_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::KeeperBountyBps)
+            .unwrap_or(0);
+
+        Ok(PlatformSettings {
+            admin,
+            treasury,
+            fee_bps,
+            keeper_bounty_bps,
+        })
     }
 }

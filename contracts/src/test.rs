@@ -1,10 +1,10 @@
 use super::*;
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Events as _, Ledger as _},
+    testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke},
     token::Client as TokenClient,
     token::StellarAssetClient,
-    Address, BytesN, Env, Symbol, TryFromVal,
+    Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
 fn setup_test_env<'a>(
@@ -899,4 +899,385 @@ fn test_getters_and_metadata() {
     assert_eq!(record.beneficiary, beneficiary);
     assert_eq!(record.amount, 5_000);
     assert_eq!(record.status, EscrowStatus::Funded);
+}
+
+#[test]
+fn test_platform_settings_keeper_bounty_bps_default_and_update() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, contract_id, admin, treasury, _, _, _, _, _) = setup_test_env(&env, 0);
+
+    assert_eq!(
+        client.try_get_settings(),
+        Err(Ok(EscrowError::NotInitialized))
+    );
+
+    client.init(&admin, &treasury, &200);
+
+    assert_eq!(client.get_keeper_bounty_bps(), 0);
+    assert_eq!(
+        client.get_settings(),
+        PlatformSettings {
+            admin: admin.clone(),
+            treasury: treasury.clone(),
+            fee_bps: 200,
+            keeper_bounty_bps: 0,
+        }
+    );
+
+    assert!(client.try_set_keeper_bounty_bps(&admin, &20).is_ok());
+    assert_eq!(client.get_keeper_bounty_bps(), 20);
+    assert_eq!(
+        client.get_settings(),
+        PlatformSettings {
+            admin: admin.clone(),
+            treasury,
+            fee_bps: 200,
+            keeper_bounty_bps: 20,
+        }
+    );
+
+    env.as_contract(&contract_id, || {
+        let stored_bounty: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::KeeperBountyBps)
+            .unwrap();
+        assert_eq!(stored_bounty, 20);
+    });
+}
+
+#[test]
+fn test_set_keeper_bounty_bps_authorization_and_bounds() {
+    let env = Env::default();
+
+    let (client, contract_id, admin, treasury, payer, _, _, _, _) = setup_test_env(&env, 0);
+
+    // Uninitialized contract rejects updates
+    let res_uninit = client
+        .mock_all_auths()
+        .try_set_keeper_bounty_bps(&admin, &20);
+    assert_eq!(res_uninit, Err(Ok(EscrowError::NotInitialized)));
+
+    client.mock_all_auths().init(&admin, &treasury, &200);
+
+    // Non-admin caller is rejected
+    let res_unauth = client
+        .mock_all_auths()
+        .try_set_keeper_bounty_bps(&payer, &20);
+    assert_eq!(res_unauth, Err(Ok(EscrowError::Unauthorized)));
+
+    // Missing admin signature is rejected by host auth
+    let res_no_sig = client.try_set_keeper_bounty_bps(&admin, &20);
+    assert!(res_no_sig.is_err());
+
+    // Explicit admin signature succeeds and records auth
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "set_keeper_bounty_bps",
+                args: (admin.clone(), 20u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_keeper_bounty_bps(&admin, &20);
+
+    assert_eq!(client.get_keeper_bounty_bps(), 20);
+
+    // Boundary checks: 0 bps and MAX_KEEPER_BOUNTY_BPS (1_000 bps = 10%) succeed; above 1_000 fails
+    assert!(client
+        .mock_all_auths()
+        .try_set_keeper_bounty_bps(&admin, &0)
+        .is_ok());
+    assert!(client
+        .mock_all_auths()
+        .try_set_keeper_bounty_bps(&admin, &MAX_KEEPER_BOUNTY_BPS)
+        .is_ok());
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_set_keeper_bounty_bps(&admin, &(MAX_KEEPER_BOUNTY_BPS + 1)),
+        Err(Ok(EscrowError::InvalidBps))
+    );
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_set_keeper_bounty_bps(&admin, &10_001),
+        Err(Ok(EscrowError::InvalidBps))
+    );
+}
+
+#[test]
+fn test_claim_refund_by_keeper_allocates_bounty_and_remainder() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+    client.set_keeper_bounty_bps(&admin, &20); // 20 bps = 0.20%
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let profile_hash = BytesN::from_array(&env, &[21u8; 32]);
+    let escrow_id = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &100_000,
+        &profile_hash,
+        &500, // unlock at 1_500
+    );
+
+    let keeper = Address::generate(&env);
+    env.ledger().with_mut(|l| l.timestamp = 1_500);
+
+    let res = client.try_claim_refund(&escrow_id, &keeper);
+    assert!(res.is_ok());
+
+    let events = env.events().all();
+    let bounty_event = events
+        .iter()
+        .find(|e| {
+            if e.0 != contract_id || e.1.len() != 2 {
+                return false;
+            }
+            let topic: Result<Symbol, _> = Symbol::try_from_val(&env, &e.1.get(0).unwrap());
+            topic == Ok(Symbol::new(&env, "keeper_bounty"))
+        })
+        .expect("keeper_bounty event not found");
+
+    let event_escrow_id: u64 = u64::try_from_val(&env, &bounty_event.1.get(1).unwrap()).unwrap();
+    let payload: (Address, i128) = <(Address, i128)>::try_from_val(&env, &bounty_event.2).unwrap();
+    assert_eq!(event_escrow_id, escrow_id);
+    assert_eq!(payload, (keeper.clone(), 200));
+
+    // 20 bps of 100_000 = 200 to keeper; remainder 99_800 to payer
+    assert_eq!(token_client.balance(&keeper), 200);
+    assert_eq!(token_client.balance(&payer), 99_800);
+    assert_eq!(token_client.balance(&contract_id), 0);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Refunded);
+}
+
+#[test]
+fn test_claim_refund_by_payer_transfers_full_balance_without_bounty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 50_000);
+    client.init(&admin, &treasury, &200);
+    client.set_keeper_bounty_bps(&admin, &250); // 2.50% configured
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let profile_hash = BytesN::from_array(&env, &[22u8; 32]);
+    let escrow_id = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &50_000,
+        &profile_hash,
+        &500,
+    );
+
+    env.ledger().with_mut(|l| l.timestamp = 1_500);
+
+    // When caller == payer, 100% returns to payer
+    client.claim_refund(&escrow_id, &payer);
+
+    assert_eq!(token_client.balance(&payer), 50_000);
+    assert_eq!(token_client.balance(&contract_id), 0);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Refunded);
+}
+
+#[test]
+fn test_claim_refund_zero_bounty_bps_and_rounding_conservation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Case 1: keeper_bounty_bps == 0 sends 100% to payer when called by keeper
+    {
+        let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+            setup_test_env(&env, 10_000);
+        client.init(&admin, &treasury, &200);
+
+        env.ledger().with_mut(|l| l.timestamp = 100);
+        let profile_hash = BytesN::from_array(&env, &[23u8; 32]);
+        let escrow_id = client.create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &10_000,
+            &profile_hash,
+            &100,
+        );
+
+        let keeper = Address::generate(&env);
+        env.ledger().with_mut(|l| l.timestamp = 200);
+        client.claim_refund(&escrow_id, &keeper);
+
+        assert_eq!(token_client.balance(&keeper), 0);
+        assert_eq!(token_client.balance(&payer), 10_000);
+        assert_eq!(token_client.balance(&contract_id), 0);
+    }
+
+    // Case 2: Non-divisible amount (9_999 at 25 bps -> 24 keeper, 9_975 payer) and tiny amount (10 at 20 bps -> 0 keeper, 10 payer)
+    {
+        let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+            setup_test_env(&env, 10_009);
+        client.init(&admin, &treasury, &200);
+        client.set_keeper_bounty_bps(&admin, &25);
+
+        env.ledger().with_mut(|l| l.timestamp = 100);
+        let profile_hash = BytesN::from_array(&env, &[24u8; 32]);
+        let escrow_odd = client.create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &9_999,
+            &profile_hash,
+            &100,
+        );
+        let escrow_tiny = client.create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &10,
+            &profile_hash,
+            &100,
+        );
+
+        let keeper = Address::generate(&env);
+        env.ledger().with_mut(|l| l.timestamp = 200);
+
+        client.claim_refund(&escrow_odd, &keeper);
+        assert_eq!(token_client.balance(&keeper), 24);
+        assert_eq!(token_client.balance(&payer), 9_975);
+
+        client.set_keeper_bounty_bps(&admin, &20);
+        client.claim_refund(&escrow_tiny, &keeper);
+        assert_eq!(token_client.balance(&keeper), 24);
+        assert_eq!(token_client.balance(&payer), 9_985);
+        assert_eq!(token_client.balance(&contract_id), 0);
+    }
+}
+
+#[test]
+fn test_claim_refund_caller_authorization_and_error_guards() {
+    let env = Env::default();
+
+    let (
+        client,
+        contract_id,
+        admin,
+        treasury,
+        payer,
+        beneficiary,
+        anchor_addr,
+        token_client,
+        token_admin_client,
+    ) = setup_test_env(&env, 0);
+    token_admin_client.mock_all_auths().mint(&payer, &30_000);
+
+    // Uninitialized contract rejects claim_refund
+    let keeper = Address::generate(&env);
+    assert_eq!(
+        client.mock_all_auths().try_claim_refund(&1, &keeper),
+        Err(Ok(EscrowError::NotInitialized))
+    );
+
+    client.mock_all_auths().init(&admin, &treasury, &200);
+    client.mock_all_auths().set_keeper_bounty_bps(&admin, &50); // 50 bps = 0.50%
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    let profile_hash = BytesN::from_array(&env, &[26u8; 32]);
+    let escrow_id = client.mock_all_auths().create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500, // unlock at 1_500
+    );
+    let released_escrow_id = client.mock_all_auths().create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+    client
+        .mock_all_auths()
+        .release_to_anchor(&released_escrow_id, &payer, &anchor_addr);
+
+    // Missing escrow rejected
+    assert_eq!(
+        client.mock_all_auths().try_claim_refund(&999, &keeper),
+        Err(Ok(EscrowError::EscrowNotFound))
+    );
+
+    // Unexpired escrow rejected at timestamp 1_499
+    env.ledger().with_mut(|l| l.timestamp = 1_499);
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_claim_refund(&escrow_id, &keeper),
+        Err(Ok(EscrowError::UnlockTimeNotReached))
+    );
+
+    env.ledger().with_mut(|l| l.timestamp = 1_500);
+
+    // Already disbursed escrow rejected
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_claim_refund(&released_escrow_id, &keeper),
+        Err(Ok(EscrowError::InvalidStatus))
+    );
+
+    // Unauthenticated call (no signature) traps in host auth
+    assert!(client.try_claim_refund(&escrow_id, &keeper).is_err());
+
+    // Wrong signer (payer signing while caller is keeper) traps in host auth
+    let wrong_signer_res = client
+        .mock_auths(&[MockAuth {
+            address: &payer,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "claim_refund",
+                args: (escrow_id, keeper.clone()).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_claim_refund(&escrow_id, &keeper);
+    assert!(wrong_signer_res.is_err());
+
+    // Valid keeper signature succeeds and pays 50 stroops to keeper + 9_950 stroops to payer
+    client
+        .mock_auths(&[MockAuth {
+            address: &keeper,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "claim_refund",
+                args: (escrow_id, keeper.clone()).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .claim_refund(&escrow_id, &keeper);
+
+    assert_eq!(token_client.balance(&keeper), 50);
+    assert_eq!(token_client.balance(&payer), 19_950);
+
+    // Duplicate claim_refund after liquidation is rejected
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_claim_refund(&escrow_id, &keeper),
+        Err(Ok(EscrowError::InvalidStatus))
+    );
 }

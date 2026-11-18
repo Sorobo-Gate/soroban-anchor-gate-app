@@ -22,11 +22,21 @@ pub struct EscrowRecord {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformSettings {
+    pub admin: Address,
+    pub treasury: Address,
+    pub fee_bps: u32,
+    pub keeper_bounty_bps: u32,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Admin,
     Treasury,
     FeeBps,
+    KeeperBountyBps,
     EscrowCounter,
     Escrow(u64),
     TokenWhitelisted(Address),
