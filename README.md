@@ -122,9 +122,39 @@ Located in `packages/contract-client/`, providing a typed interface for building
 
 ### Key Capabilities
 - **Parameter Builders**: Construct parameter XDR arrays for `init(admin, treasury, fee_bps)`, `create_escrow`, `release_to_anchor`, `refund`, `resolve_dispute`, and `set_token_whitelist`.
+- **Transaction Simulation**: `simulateCreateEscrow` simulates an unsigned escrow call and returns its Soroban resource fee in stroops, plus the latest ledger observed by the RPC server. SDK 17.2.1 does not expose a minimum ledger sequence in this response; simulation results do not guarantee later inclusion or execution.
 - **Address Validation**: Validates Ed25519 public keys (`G...`), Soroban contract IDs (`C...`), and 32-byte hex hashes.
 - **Checked Token Scaling**: `parseTokenAmount` and `formatTokenAmount` prevent floating-point rounding errors.
 - **Parity with Contract Types**: Maps directly to contract storage keys, error enums, and data types.
+
+Use `simulateCreateEscrow` before asking a wallet to sign. Its `config` is the
+existing `ClientConfig`; the helper fetches the payer account sequence, builds
+the existing `create_escrow` operation, and simulates it without signing or
+submitting:
+
+```ts
+const estimate = await simulateCreateEscrow({
+  config: { contractId, rpcUrl, networkPassphrase },
+  payer,
+  beneficiary,
+  token,
+  amount: 1_000_000n,
+  profileHashHex,
+  lockDurationSeconds: 86_400n,
+});
+
+console.log(estimate.estimatedResourceFeeStroops.toString());
+```
+
+Fee values are integer stroops returned as `bigint`. The resource fee is
+separate from the SDK-assembled transaction fee; any restoration fee is also
+reported separately. `latestLedger` is the RPC server's latest closed ledger
+when it answered, not a minimum transaction sequence. Stellar SDK 17.2.1 does
+not provide a minimum sequence in its simulation response. Simulation is an
+estimate and does not guarantee later transaction inclusion or execution.
+Failures throw `CreateEscrowSimulationError`, categorized as input, RPC,
+simulation, or malformed-response errors. Recognized escrow error codes carry
+a name and description; unknown codes remain available as numbers.
 
 ---
 

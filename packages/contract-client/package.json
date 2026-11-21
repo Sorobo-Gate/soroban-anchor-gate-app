@@ -10,7 +10,7 @@
     "build": "node node_modules/typescript/lib/tsc.js",
     "typecheck": "node node_modules/typescript/lib/tsc.js --noEmit",
     "lint": "npm run typecheck",
-    "test": "node node_modules/typescript/lib/tsc.js && node --test dist/index.test.js",
+    "test": "node node_modules/typescript/lib/tsc.js && node --test dist/*.test.js",
     "test:integration": "node node_modules/typescript/lib/tsc.js && node --test dist/integration.test.js",
     "docs": "npm run docs:html && npm run docs:markdown",
     "docs:html": "node node_modules/typedoc/bin/typedoc --options typedoc.json",
