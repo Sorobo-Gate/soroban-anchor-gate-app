@@ -1,0 +1,17 @@
+apiVersion: v2
+name: soroban-relay
+description: Production-ready Helm chart for deploying the Soroban Anchor Gate Go relay daemon on Kubernetes with HorizontalPodAutoscaler and PostgreSQL secrets management.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+icon: https://raw.githubusercontent.com/Sorobo-Gate/soroban-anchor-gate-app/main/assets/logo.png
+keywords:
+  - soroban
+  - stellar
+  - relay
+  - anchor
+  - web3
+  - kubernetes
+maintainers:
+  - name: Anas Al Shlah
+    email: anas.alshlah.dv@gmail.com

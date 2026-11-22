@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "soroban-relay.fullname" . }}-config
+  labels:
+    {{- include "soroban-relay.labels" . | nindent 4 }}
+data:
+  SOROBAN_RPC_URL: {{ .Values.config.sorobanRpcUrl | quote }}
+  SOROBAN_CONTRACT_ID: {{ .Values.config.contractId | quote }}
+  CONTRACT_ID: {{ .Values.config.contractId | quote }}
+  PORT: {{ .Values.config.port | quote }}
+  POLL_INTERVAL_SECONDS: {{ .Values.config.pollIntervalSeconds | quote }}
+  START_LEDGER: {{ .Values.config.startLedger | quote }}
+  STORE_PATH: {{ .Values.config.storePath | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otlpEndpoint | quote }}
+  RELAY_ENVIRONMENT: {{ .Values.config.relayEnvironment | quote }}
+  RELAY_VERSION: {{ .Values.config.relayVersion | quote }}
