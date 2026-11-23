@@ -8,7 +8,8 @@ mod test;
 
 use crate::errors::EscrowError;
 use crate::types::{
-    DataKey, DisbursementCommitment, EscrowEntry, EscrowRecord, EscrowStatus, WhitelistProposal,
+    DataKey, DisbursementCommitment, EscrowEntry, EscrowRecord, EscrowStatus, VolumeTracker,
+    WhitelistProposal,
 };
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec};
 
@@ -17,6 +18,9 @@ const PERSISTENT_EXTEND_TTL_THRESHOLD: u32 = 100_000;
 const PERSISTENT_EXTEND_TTL_AMOUNT: u32 = 200_000;
 const INSTANCE_EXTEND_TTL_THRESHOLD: u32 = 100_000;
 const INSTANCE_EXTEND_TTL_AMOUNT: u32 = 200_000;
+
+/// Rolling 1-hour window duration in seconds (3600s).
+pub const ROLLING_WINDOW_SECONDS: u64 = 3600;
 
 /// Upper bound on the number of legs accepted by `release_split`. Each leg costs
 /// one token transfer plus one event, so the cap keeps the worst-case
@@ -121,6 +125,46 @@ impl EscrowGate {
         {
             return Err(EscrowError::ClawbackNotAllowed);
         }
+
+        // --- Rate-Limiting Volume Governor Check (Issue 57) ---
+        let current_time = env.ledger().timestamp();
+        let mut tracker: VolumeTracker = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenVolumeTracker(token.clone()))
+            .unwrap_or(VolumeTracker {
+                window_start: current_time,
+                volume: 0,
+            });
+
+        if current_time >= tracker.window_start.saturating_add(ROLLING_WINDOW_SECONDS) {
+            tracker.window_start = current_time;
+            tracker.volume = 0;
+        }
+
+        let volume_limit = Self::get_token_volume_limit(env.clone(), token.clone());
+        if volume_limit > 0 {
+            let is_exempt = Self::check_is_admin(&env, &payer)
+                || Self::is_institutional_anchor(env.clone(), payer.clone());
+            if !is_exempt {
+                let projected_volume = tracker
+                    .volume
+                    .checked_add(amount)
+                    .ok_or(EscrowError::ArithmeticOverflow)?;
+                if projected_volume > volume_limit {
+                    return Err(EscrowError::HourlyVolumeLimitExceeded);
+                }
+            }
+        }
+
+        tracker.volume = tracker
+            .volume
+            .checked_add(amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenVolumeTracker(token.clone()), &tracker);
 
         let mut counter: u64 = env
             .storage()
@@ -1143,5 +1187,188 @@ impl EscrowGate {
 
     pub fn get_fee_bps(env: Env) -> u32 {
         env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+    }
+
+    // --- Rate-Limiting Volume Governor (Issue 57) ---
+
+    /// Sets the rolling 1-hour volume limit for a specific token.
+    /// A limit of 0 disables the volume limit for that token.
+    /// Requires administrator authorization.
+    pub fn set_token_volume_limit(
+        env: Env,
+        caller: Address,
+        token: Address,
+        limit: i128,
+    ) -> Result<(), EscrowError> {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        caller.require_auth();
+        if !Self::check_is_admin(&env, &caller) {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        if limit < 0 {
+            return Err(EscrowError::InvalidVolumeLimit);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenVolumeLimit(token.clone()), &limit);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events()
+            .publish((Symbol::new(&env, "volume_limit_set"), token), limit);
+
+        Ok(())
+    }
+
+    /// Alias for `set_token_volume_limit`.
+    pub fn set_volume_limit(
+        env: Env,
+        caller: Address,
+        token: Address,
+        limit: i128,
+    ) -> Result<(), EscrowError> {
+        Self::set_token_volume_limit(env, caller, token, limit)
+    }
+
+    /// Gets the rolling 1-hour volume limit for a token. Returns 0 if no limit is set.
+    pub fn get_token_volume_limit(env: Env, token: Address) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::TokenVolumeLimit(token))
+            .unwrap_or(0)
+    }
+
+    /// Alias for `get_token_volume_limit`.
+    pub fn get_volume_limit(env: Env, token: Address) -> i128 {
+        Self::get_token_volume_limit(env, token)
+    }
+
+    /// Returns the current active 1-hour rolling capital inflow for a token.
+    /// If the rolling window has expired, returns 0.
+    pub fn get_token_hourly_volume(env: Env, token: Address) -> i128 {
+        if let Some(tracker) = env
+            .storage()
+            .instance()
+            .get::<DataKey, VolumeTracker>(&DataKey::TokenVolumeTracker(token))
+        {
+            let current_time = env.ledger().timestamp();
+            if current_time >= tracker.window_start.saturating_add(ROLLING_WINDOW_SECONDS) {
+                0
+            } else {
+                tracker.volume
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Alias for `get_token_hourly_volume`.
+    pub fn get_hourly_volume(env: Env, token: Address) -> i128 {
+        Self::get_token_hourly_volume(env, token)
+    }
+
+    /// Returns the raw volume tracker for a token (window_start and volume).
+    pub fn get_token_volume_tracker(env: Env, token: Address) -> VolumeTracker {
+        env.storage()
+            .instance()
+            .get(&DataKey::TokenVolumeTracker(token))
+            .unwrap_or(VolumeTracker {
+                window_start: env.ledger().timestamp(),
+                volume: 0,
+            })
+    }
+
+    /// Configures an institutional anchor's verification status for governor limit bypass.
+    /// Requires administrator authorization.
+    pub fn set_institutional_anchor(
+        env: Env,
+        caller: Address,
+        anchor: Address,
+        verified: bool,
+    ) -> Result<(), EscrowError> {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        caller.require_auth();
+        if !Self::check_is_admin(&env, &caller) {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::InstitutionalAnchor(anchor.clone()), &verified);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events().publish(
+            (Symbol::new(&env, "institutional_anchor_set"), anchor),
+            verified,
+        );
+
+        Ok(())
+    }
+
+    /// Alias for `set_institutional_anchor`.
+    pub fn set_anchor_bypass(
+        env: Env,
+        caller: Address,
+        anchor: Address,
+        bypass: bool,
+    ) -> Result<(), EscrowError> {
+        Self::set_institutional_anchor(env, caller, anchor, bypass)
+    }
+
+    /// Returns whether an address is a verified institutional anchor with bypass privileges.
+    pub fn is_institutional_anchor(env: Env, anchor: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::InstitutionalAnchor(anchor))
+            .unwrap_or(false)
+    }
+
+    /// Alias for `is_institutional_anchor`.
+    pub fn is_anchor_bypass(env: Env, anchor: Address) -> bool {
+        Self::is_institutional_anchor(env, anchor)
+    }
+
+    /// Manually resets the 1-hour rolling volume tracker for a token.
+    /// Requires administrator authorization.
+    pub fn reset_token_volume_tracker(
+        env: Env,
+        caller: Address,
+        token: Address,
+    ) -> Result<(), EscrowError> {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        caller.require_auth();
+        if !Self::check_is_admin(&env, &caller) {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        let tracker = VolumeTracker {
+            window_start: env.ledger().timestamp(),
+            volume: 0,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenVolumeTracker(token.clone()), &tracker);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events()
+            .publish((Symbol::new(&env, "volume_tracker_reset"), token), caller);
+
+        Ok(())
     }
 }
