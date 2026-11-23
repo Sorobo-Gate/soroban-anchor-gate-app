@@ -2386,3 +2386,553 @@ fn test_delisting_token_does_not_brick_existing_open_escrows() {
     assert_eq!(token_client.balance(&anchor_addr), 19_600);
     assert_eq!(token_client.balance(&treasury), 400);
 }
+
+// ==============================================================================
+// RATE-LIMITING VOLUME GOVERNOR TESTS (Issue #57)
+// ==============================================================================
+
+#[test]
+fn test_set_and_get_token_volume_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, _, _, token_client, _) = setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    // Initial limit should be 0 (unlimited/disabled)
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 0);
+    assert_eq!(client.get_volume_limit(&token_client.address), 0);
+
+    // Admin sets limit
+    let res = client.try_set_token_volume_limit(&admin, &token_client.address, &50_000);
+    assert!(res.is_ok());
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 50_000);
+    assert_eq!(client.get_volume_limit(&token_client.address), 50_000);
+
+    // Alias set_volume_limit works
+    let res_alias = client.try_set_volume_limit(&admin, &token_client.address, &75_000);
+    assert!(res_alias.is_ok());
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 75_000);
+
+    // Non-admin cannot set limit
+    let res_unauth = client.try_set_token_volume_limit(&payer, &token_client.address, &100_000);
+    assert_eq!(res_unauth, Err(Ok(EscrowError::Unauthorized)));
+
+    // Setting negative limit is rejected
+    let res_neg = client.try_set_token_volume_limit(&admin, &token_client.address, &-100);
+    assert_eq!(res_neg, Err(Ok(EscrowError::InvalidVolumeLimit)));
+
+    // Admin disables limit by setting to 0
+    let res_zero = client.try_set_token_volume_limit(&admin, &token_client.address, &0);
+    assert!(res_zero.is_ok());
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 0);
+}
+
+#[test]
+fn test_hourly_volume_tracking_single_and_multiple_escrows() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _token_admin) =
+        setup_test_env(&env, 500_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    // Initial volume should be 0
+    assert_eq!(client.get_token_hourly_volume(&token_client.address), 0);
+    assert_eq!(client.get_hourly_volume(&token_client.address), 0);
+
+    // Create first escrow with 10,000
+    let profile_hash = BytesN::from_array(&env, &[1u8; 32]);
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        10_000
+    );
+
+    // Create second escrow with 25,000 at timestamp 1,500
+    env.ledger().with_mut(|l| l.timestamp = 1_500);
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &25_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        35_000
+    );
+
+    // Check volume tracker struct
+    let tracker = client.get_token_volume_tracker(&token_client.address);
+    assert_eq!(tracker.window_start, 1_000);
+    assert_eq!(tracker.volume, 35_000);
+
+    // Setup second token and verify independent volume tracking
+    let token2_admin = Address::generate(&env);
+    let token2_contract = env.register_stellar_asset_contract_v2(token2_admin);
+    let token2_client = TokenClient::new(&env, &token2_contract.address());
+    let token2_admin_client = StellarAssetClient::new(&env, &token2_contract.address());
+    token2_admin_client.mint(&payer, &100_000);
+
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token2_client.address,
+        &7_500,
+        &profile_hash,
+        &500,
+    );
+
+    // Token 2 volume is 7,500 while Token 1 remains 35,000
+    assert_eq!(
+        client.get_token_hourly_volume(&token2_client.address),
+        7_500
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        35_000
+    );
+}
+
+#[test]
+fn test_revert_create_escrow_when_hourly_volume_limit_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    // Set hourly volume limit to 30,000
+    client.set_token_volume_limit(&admin, &token_client.address, &30_000);
+
+    let profile_hash = BytesN::from_array(&env, &[2u8; 32]);
+
+    // Create escrow with 20,000 -> succeeds
+    let id1 = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &20_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id1, 1);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        20_000
+    );
+
+    // Attempting 15,000 exceeds 30,000 (20,000 + 15,000 = 35,000 > 30,000) -> Reverts!
+    let res_exceed = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &15_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_exceed, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+
+    // Verify payer balance untouched and counter not incremented
+    assert_eq!(token_client.balance(&payer), 80_000);
+    assert_eq!(client.get_counter(), 1);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        20_000
+    );
+
+    // Deposit exactly 10,000 -> reaches 30,000 cap exactly -> succeeds!
+    let id2 = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id2, 2);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        30_000
+    );
+
+    // Any further deposit (even 1 token) in this hour is rejected
+    let res_one = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &1,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_one, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+}
+
+#[test]
+fn test_rolling_window_expiration_resets_volume_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 200_000);
+    client.init(&admin, &treasury, &200);
+
+    // Set starting timestamp to 10,000
+    env.ledger().with_mut(|l| l.timestamp = 10_000);
+
+    // Set limit to 25,000
+    client.set_token_volume_limit(&admin, &token_client.address, &25_000);
+
+    let profile_hash = BytesN::from_array(&env, &[3u8; 32]);
+
+    // Fill entire limit
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &25_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        25_000
+    );
+
+    // Immediate deposit is rejected
+    let res_blocked = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_blocked, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+
+    // Advance timestamp by 3,599 seconds (t = 13,599). 1 hour has NOT elapsed yet (< 3600s)
+    env.ledger().with_mut(|l| l.timestamp = 13_599);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        25_000
+    );
+
+    let res_still_blocked = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        res_still_blocked,
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Advance timestamp by 1 more second to 13,600 (exactly 3,600 seconds elapsed)
+    env.ledger().with_mut(|l| l.timestamp = 13_600);
+
+    // Query shows hourly volume reset to 0
+    assert_eq!(client.get_token_hourly_volume(&token_client.address), 0);
+
+    // Now a new deposit of 15,000 succeeds!
+    let id_new = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &15_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id_new, 2);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        15_000
+    );
+
+    let tracker = client.get_token_volume_tracker(&token_client.address);
+    assert_eq!(tracker.window_start, 13_600);
+    assert_eq!(tracker.volume, 15_000);
+}
+
+#[test]
+fn test_institutional_anchor_administrative_bypass() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, anchor_addr, token_client, token_admin) =
+        setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 5_000);
+
+    // Set hourly volume limit to 10,000
+    client.set_token_volume_limit(&admin, &token_client.address, &10_000);
+
+    let profile_hash = BytesN::from_array(&env, &[4u8; 32]);
+
+    // Regular user fills the limit to 10,000
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+
+    // Regular user is now blocked
+    let res_blocked = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_blocked, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+
+    // anchor_addr is initially not verified
+    assert!(!client.is_institutional_anchor(&anchor_addr));
+    assert!(!client.is_anchor_bypass(&anchor_addr));
+
+    // Admin verifies anchor_addr as an institutional anchor
+    let res_set = client.try_set_institutional_anchor(&admin, &anchor_addr, &true);
+    assert!(res_set.is_ok());
+    assert!(client.is_institutional_anchor(&anchor_addr));
+    assert!(client.is_anchor_bypass(&anchor_addr));
+
+    // Mint tokens to anchor_addr
+    token_admin.mint(&anchor_addr, &100_000);
+
+    // Institutional anchor creates escrow for 50,000 (far exceeding the 10,000 limit) -> SUCCEEDS!
+    let id_anchor = client.create_escrow(
+        &anchor_addr,
+        &beneficiary,
+        &token_client.address,
+        &50_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id_anchor, 2);
+
+    // Total hourly inflow accurately reflects the anchor volume
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        60_000
+    );
+
+    // Admin revokes anchor bypass
+    let res_revoke = client.try_set_anchor_bypass(&admin, &anchor_addr, &false);
+    assert!(res_revoke.is_ok());
+    assert!(!client.is_institutional_anchor(&anchor_addr));
+
+    // Anchor is now subject to limits and rejected because volume (60k) > limit (10k)
+    let res_anchor_rejected = client.try_create_escrow(
+        &anchor_addr,
+        &beneficiary,
+        &token_client.address,
+        &1_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        res_anchor_rejected,
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Non-admin cannot set institutional anchor
+    let res_unauth = client.try_set_institutional_anchor(&payer, &anchor_addr, &true);
+    assert_eq!(res_unauth, Err(Ok(EscrowError::Unauthorized)));
+}
+
+#[test]
+fn test_high_transaction_load_simulation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, anchor_addr, token_client, token_admin) =
+        setup_test_env(&env, 1_000_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 20_000);
+
+    // Hourly limit: 50,000
+    client.set_token_volume_limit(&admin, &token_client.address, &50_000);
+
+    let profile_hash = BytesN::from_array(&env, &[5u8; 32]);
+
+    // Simulate 25 consecutive rapid transactions of 2,000 each under high load
+    for i in 0..25 {
+        let res = client.try_create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &2_000,
+            &profile_hash,
+            &100,
+        );
+        assert!(res.is_ok(), "Transaction {} should succeed", i);
+    }
+
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        50_000
+    );
+    assert_eq!(client.get_counter(), 25);
+
+    // 26th transaction under high load attempts 1,000 -> Exceeds limit -> Reverted!
+    let res_overflow = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &1_000,
+        &profile_hash,
+        &100,
+    );
+    assert_eq!(
+        res_overflow,
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Institutional anchor sends a high-volume batch through bypass
+    client.set_institutional_anchor(&admin, &anchor_addr, &true);
+    token_admin.mint(&anchor_addr, &200_000);
+
+    let res_anchor = client.try_create_escrow(
+        &anchor_addr,
+        &beneficiary,
+        &token_client.address,
+        &150_000,
+        &profile_hash,
+        &100,
+    );
+    assert!(res_anchor.is_ok());
+    assert_eq!(client.get_counter(), 26);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        200_000
+    );
+
+    // Advance 1 hour into the future (3600s)
+    env.ledger().with_mut(|l| l.timestamp = 23_600);
+
+    // High transaction load resumes in the new hour window
+    for i in 0..25 {
+        let res = client.try_create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &2_000,
+            &profile_hash,
+            &100,
+        );
+        assert!(
+            res.is_ok(),
+            "Second-window transaction {} should succeed",
+            i
+        );
+    }
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        50_000
+    );
+    assert_eq!(client.get_counter(), 51);
+}
+
+#[test]
+fn test_admin_reset_token_volume_tracker() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 50_000);
+    client.set_token_volume_limit(&admin, &token_client.address, &20_000);
+
+    let profile_hash = BytesN::from_array(&env, &[6u8; 32]);
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &20_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        20_000
+    );
+
+    // Next deposit blocked
+    assert_eq!(
+        client.try_create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &1_000,
+            &profile_hash,
+            &500
+        ),
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Non-admin reset fails
+    let res_unauth = client.try_reset_token_volume_tracker(&payer, &token_client.address);
+    assert_eq!(res_unauth, Err(Ok(EscrowError::Unauthorized)));
+
+    // Admin resets volume tracker manually
+    let res_reset = client.try_reset_token_volume_tracker(&admin, &token_client.address);
+    assert!(res_reset.is_ok());
+    assert_eq!(client.get_token_hourly_volume(&token_client.address), 0);
+
+    // Payer can immediately deposit again without waiting 1 hour
+    let id_new = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id_new, 2);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        10_000
+    );
+}
+
+#[test]
+fn test_volume_governor_uninitialized_and_disabled_modes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, _, _, _, anchor_addr, token_client, _) = setup_test_env(&env, 50_000);
+
+    // Uninitialized calls fail with NotInitialized
+    let res_set = client.try_set_token_volume_limit(&admin, &token_client.address, &10_000);
+    assert_eq!(res_set, Err(Ok(EscrowError::NotInitialized)));
+
+    let res_anchor = client.try_set_institutional_anchor(&admin, &anchor_addr, &true);
+    assert_eq!(res_anchor, Err(Ok(EscrowError::NotInitialized)));
+
+    let res_reset = client.try_reset_token_volume_tracker(&admin, &token_client.address);
+    assert_eq!(res_reset, Err(Ok(EscrowError::NotInitialized)));
+}

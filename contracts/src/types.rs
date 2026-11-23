@@ -56,6 +56,14 @@ pub struct WhitelistProposal {
     pub executed: bool,
 }
 
+/// Rolling 1-hour volume tracker for an asset.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VolumeTracker {
+    pub window_start: u64,
+    pub volume: i128,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -78,4 +86,8 @@ pub enum DataKey {
     AdminCount,
     WhitelistProposal(u64),
     ProposalCounter,
+    // Rate-limiting volume governor (Issue 57)
+    TokenVolumeLimit(Address),
+    TokenVolumeTracker(Address),
+    InstitutionalAnchor(Address),
 }

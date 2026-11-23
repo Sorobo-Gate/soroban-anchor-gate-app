@@ -11,8 +11,12 @@ import {
 } from "@stellar/stellar-sdk";
 import {
   CreateEscrowSimulationError,
+  createClientConfig,
   EscrowGateClient,
+  MAINNET,
   simulateCreateEscrow,
+  STANDALONE,
+  TESTNET,
 } from "./index";
 import type {
   CreateEscrowParams,
@@ -95,6 +99,27 @@ function diagnosticEvent(contractId: string): Record<string, unknown> {
 }
 
 describe("simulateCreateEscrow", () => {
+  test("builds simulations with the selected preset passphrase", async () => {
+    const presets = [TESTNET, MAINNET, STANDALONE] as const;
+
+    for (const [index, preset] of presets.entries()) {
+      const networkConfig = createClientConfig(
+        preset,
+        StrKey.encodeContract(Buffer.alloc(32, index + 11))
+      );
+      const input = params({ config: networkConfig });
+      let observedPassphrase: string | undefined;
+      const server = mockServer(input, (transaction: Transaction) => {
+        observedPassphrase = transaction.networkPassphrase;
+        return successfulResponse("100");
+      });
+
+      await simulateCreateEscrow(input, options(server));
+
+      assert.strictEqual(observedPassphrase, preset.networkPassphrase);
+    }
+  });
+
   test("builds and simulates the existing escrow operation without signing or submitting", async () => {
     const input = params();
     const counters = { getAccount: 0, simulate: 0 };
