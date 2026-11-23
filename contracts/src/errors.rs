@@ -29,4 +29,7 @@ pub enum EscrowError {
     CannotRemoveLastAdmin = 22,
     AdminNotFound = 23,
     MigrationFailed = 24,
+    // Rate-limiting volume governor (Issue 57)
+    HourlyVolumeLimitExceeded = 25,
+    InvalidVolumeLimit = 26,
 }

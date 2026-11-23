@@ -1,7 +1,7 @@
 extern crate std;
 
 use super::*;
-use crate::types::{DisbursementCommitment, EscrowEntry};
+use crate::types::{DisbursementCommitment, EscrowEntry, EscrowInitParams};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
@@ -9,6 +9,25 @@ use soroban_sdk::{
     token::StellarAssetClient,
     vec, Address, BytesN, Env, Symbol, TryFromVal, Vec,
 };
+
+#[contract]
+struct MockRateOracle;
+
+#[contractimpl]
+impl MockRateOracle {
+    pub fn get_rate(env: Env, _token: Address) -> i128 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("rate"))
+            .unwrap()
+    }
+}
+
+fn set_mock_rate(env: &Env, oracle: &Address, rate: i128) {
+    env.as_contract(oracle, || {
+        env.storage().instance().set(&symbol_short!("rate"), &rate);
+    });
+}
 
 fn setup_test_env<'a>(
     env: &'a Env,
@@ -2385,4 +2404,816 @@ fn test_delisting_token_does_not_brick_existing_open_escrows() {
     assert_eq!(record.status, EscrowStatus::Disbursed);
     assert_eq!(token_client.balance(&anchor_addr), 19_600);
     assert_eq!(token_client.balance(&treasury), 400);
+}
+
+// ==============================================================================
+// RATE-LIMITING VOLUME GOVERNOR TESTS (Issue #57)
+// ==============================================================================
+
+#[test]
+fn test_set_and_get_token_volume_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, _, _, token_client, _) = setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    // Initial limit should be 0 (unlimited/disabled)
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 0);
+    assert_eq!(client.get_volume_limit(&token_client.address), 0);
+
+    // Admin sets limit
+    let res = client.try_set_token_volume_limit(&admin, &token_client.address, &50_000);
+    assert!(res.is_ok());
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 50_000);
+    assert_eq!(client.get_volume_limit(&token_client.address), 50_000);
+
+    // Alias set_volume_limit works
+    let res_alias = client.try_set_volume_limit(&admin, &token_client.address, &75_000);
+    assert!(res_alias.is_ok());
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 75_000);
+
+    // Non-admin cannot set limit
+    let res_unauth = client.try_set_token_volume_limit(&payer, &token_client.address, &100_000);
+    assert_eq!(res_unauth, Err(Ok(EscrowError::Unauthorized)));
+
+    // Setting negative limit is rejected
+    let res_neg = client.try_set_token_volume_limit(&admin, &token_client.address, &-100);
+    assert_eq!(res_neg, Err(Ok(EscrowError::InvalidVolumeLimit)));
+
+    // Admin disables limit by setting to 0
+    let res_zero = client.try_set_token_volume_limit(&admin, &token_client.address, &0);
+    assert!(res_zero.is_ok());
+    assert_eq!(client.get_token_volume_limit(&token_client.address), 0);
+}
+
+#[test]
+fn test_hourly_volume_tracking_single_and_multiple_escrows() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _token_admin) =
+        setup_test_env(&env, 500_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    // Initial volume should be 0
+    assert_eq!(client.get_token_hourly_volume(&token_client.address), 0);
+    assert_eq!(client.get_hourly_volume(&token_client.address), 0);
+
+    // Create first escrow with 10,000
+    let profile_hash = BytesN::from_array(&env, &[1u8; 32]);
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        10_000
+    );
+
+    // Create second escrow with 25,000 at timestamp 1,500
+    env.ledger().with_mut(|l| l.timestamp = 1_500);
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &25_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        35_000
+    );
+
+    // Check volume tracker struct
+    let tracker = client.get_token_volume_tracker(&token_client.address);
+    assert_eq!(tracker.window_start, 1_000);
+    assert_eq!(tracker.volume, 35_000);
+
+    // Setup second token and verify independent volume tracking
+    let token2_admin = Address::generate(&env);
+    let token2_contract = env.register_stellar_asset_contract_v2(token2_admin);
+    let token2_client = TokenClient::new(&env, &token2_contract.address());
+    let token2_admin_client = StellarAssetClient::new(&env, &token2_contract.address());
+    token2_admin_client.mint(&payer, &100_000);
+
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token2_client.address,
+        &7_500,
+        &profile_hash,
+        &500,
+    );
+
+    // Token 2 volume is 7,500 while Token 1 remains 35,000
+    assert_eq!(
+        client.get_token_hourly_volume(&token2_client.address),
+        7_500
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        35_000
+    );
+}
+
+#[test]
+fn test_revert_create_escrow_when_hourly_volume_limit_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    // Set hourly volume limit to 30,000
+    client.set_token_volume_limit(&admin, &token_client.address, &30_000);
+
+    let profile_hash = BytesN::from_array(&env, &[2u8; 32]);
+
+    // Create escrow with 20,000 -> succeeds
+    let id1 = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &20_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id1, 1);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        20_000
+    );
+
+    // Attempting 15,000 exceeds 30,000 (20,000 + 15,000 = 35,000 > 30,000) -> Reverts!
+    let res_exceed = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &15_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_exceed, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+
+    // Verify payer balance untouched and counter not incremented
+    assert_eq!(token_client.balance(&payer), 80_000);
+    assert_eq!(client.get_counter(), 1);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        20_000
+    );
+
+    // Deposit exactly 10,000 -> reaches 30,000 cap exactly -> succeeds!
+    let id2 = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id2, 2);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        30_000
+    );
+
+    // Any further deposit (even 1 token) in this hour is rejected
+    let res_one = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &1,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_one, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+}
+
+#[test]
+fn test_rolling_window_expiration_resets_volume_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 200_000);
+    client.init(&admin, &treasury, &200);
+
+    // Set starting timestamp to 10,000
+    env.ledger().with_mut(|l| l.timestamp = 10_000);
+
+    // Set limit to 25,000
+    client.set_token_volume_limit(&admin, &token_client.address, &25_000);
+
+    let profile_hash = BytesN::from_array(&env, &[3u8; 32]);
+
+    // Fill entire limit
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &25_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        25_000
+    );
+
+    // Immediate deposit is rejected
+    let res_blocked = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_blocked, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+
+    // Advance timestamp by 3,599 seconds (t = 13,599). 1 hour has NOT elapsed yet (< 3600s)
+    env.ledger().with_mut(|l| l.timestamp = 13_599);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        25_000
+    );
+
+    let res_still_blocked = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        res_still_blocked,
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Advance timestamp by 1 more second to 13,600 (exactly 3,600 seconds elapsed)
+    env.ledger().with_mut(|l| l.timestamp = 13_600);
+
+    // Query shows hourly volume reset to 0
+    assert_eq!(client.get_token_hourly_volume(&token_client.address), 0);
+
+    // Now a new deposit of 15,000 succeeds!
+    let id_new = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &15_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id_new, 2);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        15_000
+    );
+
+    let tracker = client.get_token_volume_tracker(&token_client.address);
+    assert_eq!(tracker.window_start, 13_600);
+    assert_eq!(tracker.volume, 15_000);
+}
+
+#[test]
+fn test_institutional_anchor_administrative_bypass() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, anchor_addr, token_client, token_admin) =
+        setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 5_000);
+
+    // Set hourly volume limit to 10,000
+    client.set_token_volume_limit(&admin, &token_client.address, &10_000);
+
+    let profile_hash = BytesN::from_array(&env, &[4u8; 32]);
+
+    // Regular user fills the limit to 10,000
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+
+    // Regular user is now blocked
+    let res_blocked = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &5_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(res_blocked, Err(Ok(EscrowError::HourlyVolumeLimitExceeded)));
+
+    // anchor_addr is initially not verified
+    assert!(!client.is_institutional_anchor(&anchor_addr));
+    assert!(!client.is_anchor_bypass(&anchor_addr));
+
+    // Admin verifies anchor_addr as an institutional anchor
+    let res_set = client.try_set_institutional_anchor(&admin, &anchor_addr, &true);
+    assert!(res_set.is_ok());
+    assert!(client.is_institutional_anchor(&anchor_addr));
+    assert!(client.is_anchor_bypass(&anchor_addr));
+
+    // Mint tokens to anchor_addr
+    token_admin.mint(&anchor_addr, &100_000);
+
+    // Institutional anchor creates escrow for 50,000 (far exceeding the 10,000 limit) -> SUCCEEDS!
+    let id_anchor = client.create_escrow(
+        &anchor_addr,
+        &beneficiary,
+        &token_client.address,
+        &50_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id_anchor, 2);
+
+    // Total hourly inflow accurately reflects the anchor volume
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        60_000
+    );
+
+    // Admin revokes anchor bypass
+    let res_revoke = client.try_set_anchor_bypass(&admin, &anchor_addr, &false);
+    assert!(res_revoke.is_ok());
+    assert!(!client.is_institutional_anchor(&anchor_addr));
+
+    // Anchor is now subject to limits and rejected because volume (60k) > limit (10k)
+    let res_anchor_rejected = client.try_create_escrow(
+        &anchor_addr,
+        &beneficiary,
+        &token_client.address,
+        &1_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        res_anchor_rejected,
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Non-admin cannot set institutional anchor
+    let res_unauth = client.try_set_institutional_anchor(&payer, &anchor_addr, &true);
+    assert_eq!(res_unauth, Err(Ok(EscrowError::Unauthorized)));
+}
+
+#[test]
+fn test_high_transaction_load_simulation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, anchor_addr, token_client, token_admin) =
+        setup_test_env(&env, 1_000_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 20_000);
+
+    // Hourly limit: 50,000
+    client.set_token_volume_limit(&admin, &token_client.address, &50_000);
+
+    let profile_hash = BytesN::from_array(&env, &[5u8; 32]);
+
+    // Simulate 25 consecutive rapid transactions of 2,000 each under high load
+    for i in 0..25 {
+        let res = client.try_create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &2_000,
+            &profile_hash,
+            &100,
+        );
+        assert!(res.is_ok(), "Transaction {} should succeed", i);
+    }
+
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        50_000
+    );
+    assert_eq!(client.get_counter(), 25);
+
+    // 26th transaction under high load attempts 1,000 -> Exceeds limit -> Reverted!
+    let res_overflow = client.try_create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &1_000,
+        &profile_hash,
+        &100,
+    );
+    assert_eq!(
+        res_overflow,
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Institutional anchor sends a high-volume batch through bypass
+    client.set_institutional_anchor(&admin, &anchor_addr, &true);
+    token_admin.mint(&anchor_addr, &200_000);
+
+    let res_anchor = client.try_create_escrow(
+        &anchor_addr,
+        &beneficiary,
+        &token_client.address,
+        &150_000,
+        &profile_hash,
+        &100,
+    );
+    assert!(res_anchor.is_ok());
+    assert_eq!(client.get_counter(), 26);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        200_000
+    );
+
+    // Advance 1 hour into the future (3600s)
+    env.ledger().with_mut(|l| l.timestamp = 23_600);
+
+    // High transaction load resumes in the new hour window
+    for i in 0..25 {
+        let res = client.try_create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &2_000,
+            &profile_hash,
+            &100,
+        );
+        assert!(
+            res.is_ok(),
+            "Second-window transaction {} should succeed",
+            i
+        );
+    }
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        50_000
+    );
+    assert_eq!(client.get_counter(), 51);
+}
+
+#[test]
+fn test_admin_reset_token_volume_tracker() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 100_000);
+    client.init(&admin, &treasury, &200);
+
+    env.ledger().with_mut(|l| l.timestamp = 50_000);
+    client.set_token_volume_limit(&admin, &token_client.address, &20_000);
+
+    let profile_hash = BytesN::from_array(&env, &[6u8; 32]);
+    client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &20_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        20_000
+    );
+
+    // Next deposit blocked
+    assert_eq!(
+        client.try_create_escrow(
+            &payer,
+            &beneficiary,
+            &token_client.address,
+            &1_000,
+            &profile_hash,
+            &500
+        ),
+        Err(Ok(EscrowError::HourlyVolumeLimitExceeded))
+    );
+
+    // Non-admin reset fails
+    let res_unauth = client.try_reset_token_volume_tracker(&payer, &token_client.address);
+    assert_eq!(res_unauth, Err(Ok(EscrowError::Unauthorized)));
+
+    // Admin resets volume tracker manually
+    let res_reset = client.try_reset_token_volume_tracker(&admin, &token_client.address);
+    assert!(res_reset.is_ok());
+    assert_eq!(client.get_token_hourly_volume(&token_client.address), 0);
+
+    // Payer can immediately deposit again without waiting 1 hour
+    let id_new = client.create_escrow(
+        &payer,
+        &beneficiary,
+        &token_client.address,
+        &10_000,
+        &profile_hash,
+        &500,
+    );
+    assert_eq!(id_new, 2);
+    assert_eq!(
+        client.get_token_hourly_volume(&token_client.address),
+        10_000
+    );
+}
+
+#[test]
+fn test_volume_governor_uninitialized_and_disabled_modes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, admin, _, _, _, anchor_addr, token_client, _) = setup_test_env(&env, 50_000);
+
+    // Uninitialized calls fail with NotInitialized
+    let res_set = client.try_set_token_volume_limit(&admin, &token_client.address, &10_000);
+    assert_eq!(res_set, Err(Ok(EscrowError::NotInitialized)));
+
+    let res_anchor = client.try_set_institutional_anchor(&admin, &anchor_addr, &true);
+    assert_eq!(res_anchor, Err(Ok(EscrowError::NotInitialized)));
+
+    let res_reset = client.try_reset_token_volume_tracker(&admin, &token_client.address);
+    assert_eq!(res_reset, Err(Ok(EscrowError::NotInitialized)));
+}
+
+#[test]
+fn test_time_weighted_cancellation_uses_single_floor_and_routes_funds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 20_000);
+    client.init(&admin, &treasury, &0);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
+
+    let params = EscrowInitParams {
+        payer: payer.clone(),
+        beneficiary: beneficiary.clone(),
+        token: token_client.address.clone(),
+        amount: 10,
+        profile_hash: BytesN::from_array(&env, &[31; 32]),
+        lock_duration: 11,
+        cancellation_penalty_bps: 1_100,
+        referrer: None,
+        committed_rate: None,
+    };
+    let escrow_id = client.create_escrow_with_params(&params);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_010);
+
+    client.cancel_escrow(&escrow_id, &payer);
+
+    // Flooring the full ratio gives 1; flooring the intermediate fee would incorrectly give 0.
+    assert_eq!(10 * 1_100 * 10 / (10_000 * 11), 1);
+    assert_eq!(token_client.balance(&beneficiary), 1);
+    assert_eq!(token_client.balance(&payer), 19_999);
+    assert_eq!(token_client.balance(&contract_id), 0);
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Refunded);
+}
+
+#[test]
+fn test_cancellation_rejects_deadline_and_bps_above_full_penalty() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 20_000);
+    client.init(&admin, &treasury, &0);
+
+    let mut params = EscrowInitParams {
+        payer: payer.clone(),
+        beneficiary,
+        token: token_client.address.clone(),
+        amount: 1_000,
+        profile_hash: BytesN::from_array(&env, &[32; 32]),
+        lock_duration: 10,
+        cancellation_penalty_bps: 10_001,
+        referrer: None,
+        committed_rate: None,
+    };
+    assert_eq!(
+        client.try_create_escrow_with_params(&params),
+        Err(Ok(EscrowError::InvalidBps))
+    );
+
+    params.cancellation_penalty_bps = 10_000;
+    let escrow_id = client.create_escrow_with_params(&params);
+    env.ledger().with_mut(|ledger| ledger.timestamp += 10);
+    assert_eq!(
+        client.try_cancel_escrow(&escrow_id, &payer),
+        Err(Ok(EscrowError::UnlockTimePassed))
+    );
+}
+
+#[test]
+fn test_referrer_receives_twenty_percent_of_platform_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, contract_id, admin, treasury, payer, beneficiary, anchor, token_client, _) =
+        setup_test_env(&env, 20_000);
+    let referrer = Address::generate(&env);
+    client.init(&admin, &treasury, &200);
+    let params = EscrowInitParams {
+        payer: payer.clone(),
+        beneficiary,
+        token: token_client.address.clone(),
+        amount: 10_000,
+        profile_hash: BytesN::from_array(&env, &[33; 32]),
+        lock_duration: 100,
+        cancellation_penalty_bps: 0,
+        referrer: Some(referrer.clone()),
+        committed_rate: None,
+    };
+    let escrow_id = client.create_escrow_with_params(&params);
+
+    client.release_to_anchor(&escrow_id, &payer, &anchor);
+
+    assert_eq!(token_client.balance(&treasury), 160);
+    assert_eq!(token_client.balance(&referrer), 40);
+    assert_eq!(token_client.balance(&anchor), 9_800);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_stream_accrues_per_second_and_caps_withdrawal_at_end() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 100);
+    client.init(&admin, &treasury, &0);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_000);
+    let stream_id = client.create_stream(&payer, &beneficiary, &token_client.address, &3, &10);
+
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_001);
+    assert_eq!(client.stream_withdraw(&stream_id), 3);
+    assert_eq!(client.stream_withdraw(&stream_id), 0);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_002);
+    assert_eq!(client.stream_withdraw(&stream_id), 3);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 1_012);
+    assert_eq!(client.stream_withdraw(&stream_id), 24);
+
+    assert_eq!(token_client.balance(&beneficiary), 30);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_terminating_stream_returns_only_unaccrued_capital() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 100);
+    client.init(&admin, &treasury, &0);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 2_000);
+    let stream_id = client.create_stream(&payer, &beneficiary, &token_client.address, &2, &10);
+    env.ledger().with_mut(|ledger| ledger.timestamp = 2_004);
+
+    assert_eq!(client.terminate_stream(&stream_id, &payer), 12);
+    assert_eq!(client.stream_withdraw(&stream_id), 8);
+    assert_eq!(token_client.balance(&payer), 92);
+    assert_eq!(token_client.balance(&beneficiary), 8);
+    assert_eq!(token_client.balance(&contract_id), 0);
+    assert_eq!(
+        client.try_terminate_stream(&stream_id, &payer),
+        Err(Ok(EscrowError::InvalidStatus))
+    );
+}
+
+#[test]
+fn test_oracle_deviation_disputes_escrow_and_admin_can_resolve_once() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, contract_id, admin, treasury, payer, beneficiary, anchor, token_client, _) =
+        setup_test_env(&env, 20_000);
+    client.init(&admin, &treasury, &0);
+    let oracle = env.register(MockRateOracle, ());
+    set_mock_rate(&env, &oracle, 110);
+    client.configure_rate_oracle(&admin, &oracle, &1_000);
+
+    let params = EscrowInitParams {
+        payer: payer.clone(),
+        beneficiary: beneficiary.clone(),
+        token: token_client.address.clone(),
+        amount: 10_000,
+        profile_hash: BytesN::from_array(&env, &[34; 32]),
+        lock_duration: 100,
+        cancellation_penalty_bps: 0,
+        referrer: None,
+        committed_rate: Some(100),
+    };
+    let within_limit_id = client.create_escrow_with_params(&params);
+    client.release_to_anchor(&within_limit_id, &payer, &anchor);
+    assert_eq!(
+        client.get_escrow(&within_limit_id).status,
+        EscrowStatus::Disbursed
+    );
+
+    set_mock_rate(&env, &oracle, 111);
+    let disputed_id = client.create_escrow_with_params(&params);
+    client.release_to_anchor(&disputed_id, &payer, &anchor);
+    assert_eq!(
+        client.get_escrow(&disputed_id).status,
+        EscrowStatus::Disputed
+    );
+    assert_eq!(token_client.balance(&contract_id), 10_000);
+
+    client.resolve_dispute(&disputed_id, &admin, &5_000, &5_000);
+    assert_eq!(token_client.balance(&payer), 5_000);
+    assert_eq!(token_client.balance(&beneficiary), 5_000);
+    assert_eq!(
+        client.try_resolve_dispute(&disputed_id, &admin, &5_000, &5_000),
+        Err(Ok(EscrowError::InvalidStatus))
+    );
+}
+
+#[test]
+fn test_split_release_pays_referrer_from_fee_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, contract_id, admin, treasury, payer, beneficiary, _, token_client, _) =
+        setup_test_env(&env, 20_000);
+    let recipient = Address::generate(&env);
+    let referrer = Address::generate(&env);
+    client.init(&admin, &treasury, &200);
+    let params = EscrowInitParams {
+        payer: payer.clone(),
+        beneficiary,
+        token: token_client.address.clone(),
+        amount: 10_000,
+        profile_hash: BytesN::from_array(&env, &[35; 32]),
+        lock_duration: 100,
+        cancellation_penalty_bps: 0,
+        referrer: Some(referrer.clone()),
+        committed_rate: None,
+    };
+    let escrow_id = client.create_escrow_with_params(&params);
+    let commitments = vec![
+        &env,
+        DisbursementCommitment {
+            recipient: recipient.clone(),
+            amount: 9_800,
+            commitment_hash: BytesN::from_array(&env, &[36; 32]),
+        },
+    ];
+
+    client.release_split(&escrow_id, &payer, &commitments);
+
+    assert_eq!(token_client.balance(&treasury), 160);
+    assert_eq!(token_client.balance(&referrer), 40);
+    assert_eq!(token_client.balance(&recipient), 9_800);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_oracle_deviation_also_blocks_split_release() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, contract_id, admin, treasury, payer, beneficiary, recipient, token_client, _) =
+        setup_test_env(&env, 20_000);
+    client.init(&admin, &treasury, &0);
+    let oracle = env.register(MockRateOracle, ());
+    set_mock_rate(&env, &oracle, 111);
+    client.configure_rate_oracle(&admin, &oracle, &1_000);
+    let params = EscrowInitParams {
+        payer: payer.clone(),
+        beneficiary,
+        token: token_client.address.clone(),
+        amount: 10_000,
+        profile_hash: BytesN::from_array(&env, &[37; 32]),
+        lock_duration: 100,
+        cancellation_penalty_bps: 0,
+        referrer: None,
+        committed_rate: Some(100),
+    };
+    let escrow_id = client.create_escrow_with_params(&params);
+    let commitments = vec![
+        &env,
+        DisbursementCommitment {
+            recipient: recipient.clone(),
+            amount: 10_000,
+            commitment_hash: BytesN::from_array(&env, &[38; 32]),
+        },
+    ];
+
+    client.release_split(&escrow_id, &payer, &commitments);
+
+    assert_eq!(client.get_escrow(&escrow_id).status, EscrowStatus::Disputed);
+    assert_eq!(token_client.balance(&recipient), 0);
+    assert_eq!(token_client.balance(&contract_id), 10_000);
 }
