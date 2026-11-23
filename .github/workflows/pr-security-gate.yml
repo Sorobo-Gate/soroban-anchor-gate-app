@@ -178,6 +178,12 @@ jobs:
               FOUND=1
             fi
 
+            # Credential theft & exfiltration (npm/cargo/git/gh tokens, .env harvesting, crypto wallet keys)
+            if echo "$CONTENT" | grep -Pni '(\.cargo/credentials|\.npmrc|\.git-credentials|\.config/gh|\.ssh/|\.stellar/|\.config/solana|id\.json)' 2>/dev/null; then
+              FINDINGS="${FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Potential credential theft targeting developer tokens, SSH keys, or crypto wallets"
+              FOUND=1
+            fi
+
           done <<< "$CHANGED_FILES"
 
           if [ "$FOUND" -eq 1 ]; then
@@ -240,8 +246,8 @@ jobs:
             [ ! -f "$file" ] && continue
 
             case "$file" in
-              *.exe|*.dll|*.so|*.dylib|*.bat|*.cmd|*.msi|*.scr|*.pif|*.jar|*.class)
-                FILE_FINDINGS="${FILE_FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Executable binary / dropper committed"
+              *.exe|*.dll|*.so|*.dylib|*.bat|*.cmd|*.msi|*.scr|*.pif|*.jar|*.class|.vscode/*|*/.vscode/*|*.code-workspace)
+                FILE_FINDINGS="${FILE_FINDINGS}\n🚨 **CRITICAL** [\`$file\`]: Dangerous executable binary, script, or IDE automation file committed"
                 FILE_FOUND=1
                 ;;
             esac
