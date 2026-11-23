@@ -4,6 +4,7 @@ import {
   EscrowGateClient,
   EscrowContractState,
   EscrowError,
+  calculateDisputeSplit,
   computeProfileHash,
   disputeRecordToScVal,
   escrowToScVal,
@@ -241,6 +242,14 @@ describe("EscrowGateClient & SDK Helpers", () => {
     assert.strictEqual(toStroops("10.50"), 105_000_000n);
     assert.strictEqual(fromStroops(105_000_000n), "10.5");
     assert.strictEqual(typeof getAnchorExchangeQuote, "function");
+  });
+
+  test("entry point re-exports dispute split calculator", () => {
+    assert.strictEqual(typeof calculateDisputeSplit, "function");
+    assert.deepStrictEqual(calculateDisputeSplit(10_000n, 6_000, 4_000), {
+      payerAmount: 6_000n,
+      beneficiaryAmount: 4_000n,
+    });
   });
 });
 import "./crypto.test";
