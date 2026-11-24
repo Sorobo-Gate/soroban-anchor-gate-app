@@ -2,7 +2,7 @@
 
 ### Wave Task Information
 - **Linked Issue:** Closes #
-- **Complexity Tier:** 
+- **Complexity Tier:**
   - [ ] `wave:trivial` (100 pts)
   - [ ] `wave:medium` (150 pts)
   - [ ] `wave:high` (200 pts)
@@ -20,7 +20,7 @@
 
 ### What Changed
 <!-- List the specific modifications, new features, bug fixes, or documentation updates. -->
-- 
+-
 
 ---
 

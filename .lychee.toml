@@ -1,0 +1,13 @@
+# Lychee link checker configuration for SorobanAnchor Gate
+# Compatible with lychee v0.24.x (flat config format)
+# See: https://lychee.cli.rs/
+
+max_concurrency = 10
+max_retries = 2
+
+# Ignore localhost / private addresses to avoid CI failures on local-only links.
+exclude = [
+  "http://127.0.0.1*",
+  "http://localhost*",
+  "http://0.0.0.0*",
+]

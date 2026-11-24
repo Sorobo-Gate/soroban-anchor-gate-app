@@ -10,7 +10,7 @@ The PR Security Gate workflow automatically applies labels to PRs. You must crea
 
 ### Option A — GitHub Web UI (Manual)
 
-1. Go to your repository: **https://github.com/emarkees/soroban-anchor-gate-app**
+1. Go to your repository: **https://github.com/Sorobo-Gate/soroban-anchor-gate-app**
 2. Click the **Issues** tab
 3. Click **Labels** (right side)
 4. Click **New label**
@@ -73,7 +73,7 @@ curl -X POST \
 
 ### Verification
 
-After creating the labels, go to **https://github.com/emarkees/soroban-anchor-gate-app/labels** and confirm both labels appear:
+After creating the labels, go to **https://github.com/Sorobo-Gate/soroban-anchor-gate-app/labels** and confirm both labels appear:
 
 - 🔴 **security-rejected**
 - 🟢 **security-passed**
@@ -86,7 +86,7 @@ Secret scanning detects leaked credentials (API keys, Stellar secret keys, passw
 
 ### Step-by-Step (GitHub Web UI)
 
-1. Go to your repository: **https://github.com/emarkees/soroban-anchor-gate-app**
+1. Go to your repository: **https://github.com/Sorobo-Gate/soroban-anchor-gate-app**
 
 2. Click **Settings** (top tab bar — you must be the repo owner/admin)
 
@@ -198,7 +198,7 @@ Reports will appear at **Security** → **Advisories** and only you (the admin) 
 
 After completing all steps above, verify:
 
-- [ ] Go to **https://github.com/emarkees/soroban-anchor-gate-app/labels** — see `security-rejected` (red) and `security-passed` (green)
+- [ ] Go to **https://github.com/Sorobo-Gate/soroban-anchor-gate-app/labels** — see `security-rejected` (red) and `security-passed` (green)
 - [ ] Go to **Settings → Code security** — Secret scanning ✅, Push protection ✅, Dependabot alerts ✅
 - [ ] Go to **Settings → Branches** — `main` and `develop` both have protection rules
 - [ ] Go to **Security tab** — Check for any existing secret scanning alerts

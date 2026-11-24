@@ -377,6 +377,38 @@ describe("EscrowSocketClient against a mock WebSocket server", () => {
     const port = Number(new URL(url).port);
     await new Promise<void>((r) => probe.wss.close(() => r()));
 
+    // Poll until the port is genuinely unreachable (connection refused),
+    // so the client's first connection attempt fails immediately and
+    // drives it into the reconnect/backoff path.
+    const net = await import("node:net");
+    let unreachable = false;
+    for (let i = 0; i < 100 && !unreachable; i++) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const sock = new net.Socket();
+          sock.setTimeout(100);
+          sock.once("connect", () => {
+            sock.destroy();
+            resolve();
+          });
+          sock.once("error", () => {
+            sock.destroy();
+            reject();
+          });
+          sock.once("timeout", () => {
+            sock.destroy();
+            reject();
+          });
+          sock.connect(port, "127.0.0.1");
+        });
+        // Port still reachable — wait and poll again
+        await new Promise((r) => setTimeout(r, 100));
+      } catch {
+        unreachable = true;
+      }
+    }
+    assert.ok(unreachable, "test port should be unreachable before starting the client");
+
     const statuses: EscrowSocketStatus[] = [];
     const client = new EscrowSocketClient({
       url,

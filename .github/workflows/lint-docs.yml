@@ -1,0 +1,51 @@
+name: Lint Documentation
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-docs:
+    name: Markdown Lint & Link Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # ── markdownlint across docs/, AUDIT/, .github/ ──────────────────────
+      - name: Install markdownlint-cli2
+        run: |
+          npm install --no-save markdownlint-cli2@0.14.0
+
+      - name: Run markdownlint
+        run: |
+          npx markdownlint-cli2 \
+            --config .markdownlint-cli2.jsonc \
+            -- "docs/**/*.md" \
+            "AUDIT/**/*.md" \
+            ".github/**/*.md"
+
+      # ── lychee link check across docs/, AUDIT/, .github/ ─────────────────
+      - name: Run lychee link checker
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --config .lychee.toml
+            docs/**/*.md
+            AUDIT/**/*.md
+            .github/**/*.md

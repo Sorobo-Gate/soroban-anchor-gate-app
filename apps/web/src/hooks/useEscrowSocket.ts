@@ -339,7 +339,9 @@ export class EscrowSocketClient {
 
     socket.onerror = () => {
       if (this.socket !== socket) return;
+      this.socket = null;
       this.emit("error");
+      this.scheduleReconnect();
     };
 
     socket.onclose = () => {
@@ -351,6 +353,7 @@ export class EscrowSocketClient {
 
   private scheduleReconnect(): void {
     if (this.stopped) return;
+    if (this.retryHandle !== null) return;
     const { maxRetries } = this.opts;
     if (maxRetries !== undefined && this.attempt >= maxRetries) {
       this.stopped = true;
