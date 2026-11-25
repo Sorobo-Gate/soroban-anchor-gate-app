@@ -47,8 +47,9 @@ describe("ReceiptPDF document structure", () => {
     const count = Number(header[1].split(" ")[1]);
     assert.strictEqual(count, 8);
 
+    // header: ["xref", "0 <count>", free entry (object 0), object 1, ...]
     for (let id = 1; id < count; id++) {
-      const entry = header[1 + id];
+      const entry = header[2 + id];
       const offset = Number(entry.slice(0, 10));
       assert.ok(
         text.startsWith(`${id} 0 obj`, offset),

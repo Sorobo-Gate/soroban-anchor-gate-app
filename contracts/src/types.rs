@@ -150,4 +150,6 @@ pub enum DataKey {
     Hashlock(u64),
     // Secondary beneficiary fallback routing (Issue 64)
     SecondaryBeneficiary(u64),
+    // Partial dispute settlements with mutual consent (Issue 58)
+    SettlementProposal(u64),
 }

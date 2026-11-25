@@ -1657,6 +1657,225 @@ impl EscrowGate {
         Ok(())
     }
 
+    /// Propose a mutual settlement split between payer and beneficiary.
+    ///
+    /// The payer proposes `payer_bps` (0..=10_000) basis points of the escrow amount
+    /// to be returned to the payer, with the remainder going to the beneficiary.
+    /// Requires payer authorization.
+    pub fn propose_settlement(env: Env, escrow_id: u64, payer_bps: u32) -> Result<(), EscrowError> {
+        let key = DataKey::Escrow(escrow_id);
+        let record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        Self::propose_settlement_by(env, escrow_id, record.payer, payer_bps)
+    }
+
+    /// Propose a mutual settlement split initiated by either payer or beneficiary.
+    ///
+    /// Requires `caller` authorization, and `caller` must be either payer or beneficiary.
+    pub fn propose_settlement_by(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        payer_bps: u32,
+    ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        if payer_bps > (BPS_DIVISOR as u32) {
+            return Err(EscrowError::InvalidBps);
+        }
+
+        let key = DataKey::Escrow(escrow_id);
+        let record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        caller.require_auth();
+
+        if caller != record.payer && caller != record.beneficiary {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        let proposal = SettlementProposal {
+            escrow_id,
+            proposer: caller.clone(),
+            payer_bps,
+        };
+
+        let proposal_key = DataKey::SettlementProposal(escrow_id);
+        env.storage().persistent().set(&proposal_key, &proposal);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events().publish(
+            (Symbol::new(&env, "settlement_proposed"), escrow_id),
+            (caller, payer_bps),
+        );
+
+        Ok(())
+    }
+
+    /// Accept a pending mutual settlement proposal requiring counterparty signature.
+    ///
+    /// Upon mutual acceptance, funds are disbursed immediately according to the agreed split,
+    /// and the escrow status is updated to Disbursed.
+    pub fn accept_settlement(env: Env, escrow_id: u64) -> Result<(), EscrowError> {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        let key = DataKey::Escrow(escrow_id);
+        let record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let proposal_key = DataKey::SettlementProposal(escrow_id);
+        let proposal: SettlementProposal = env
+            .storage()
+            .persistent()
+            .get(&proposal_key)
+            .ok_or(EscrowError::ProposalNotFound)?;
+
+        let counterparty = if proposal.proposer == record.payer {
+            record.beneficiary
+        } else if proposal.proposer == record.beneficiary {
+            record.payer
+        } else {
+            return Err(EscrowError::Unauthorized);
+        };
+
+        Self::accept_settlement_by(env, escrow_id, counterparty)
+    }
+
+    /// Accept a pending mutual settlement proposal by an explicit caller.
+    ///
+    /// The caller must authenticate and must be the counterparty to the proposer.
+    pub fn accept_settlement_by(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+    ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        let key = DataKey::Escrow(escrow_id);
+        let mut record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let proposal_key = DataKey::SettlementProposal(escrow_id);
+        let proposal: SettlementProposal = env
+            .storage()
+            .persistent()
+            .get(&proposal_key)
+            .ok_or(EscrowError::ProposalNotFound)?;
+
+        let counterparty = if proposal.proposer == record.payer {
+            &record.beneficiary
+        } else if proposal.proposer == record.beneficiary {
+            &record.payer
+        } else {
+            return Err(EscrowError::Unauthorized);
+        };
+
+        if &caller != counterparty {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        caller.require_auth();
+
+        let token_client = token::Client::new(&env, &record.token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        let mut distributable = record.amount;
+        if contract_balance < record.amount {
+            let deficit = record.amount - contract_balance;
+            distributable = contract_balance;
+            env.events().publish(
+                (Symbol::new(&env, "ClawbackHandled"), record.token.clone()),
+                (escrow_id, deficit),
+            );
+        }
+
+        let payer_amount = distributable
+            .checked_mul(proposal.payer_bps as i128)
+            .ok_or(EscrowError::ArithmeticOverflow)?
+            / BPS_DIVISOR;
+
+        let beneficiary_amount = distributable
+            .checked_sub(payer_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+
+        // Checks-Effects-Interactions: finalize state before external token transfers.
+        record.status = EscrowStatus::Disbursed;
+        env.storage().persistent().set(&key, &record);
+        env.storage().persistent().remove(&proposal_key);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        if payer_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &record.payer,
+                &payer_amount,
+            );
+        }
+
+        if beneficiary_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &record.beneficiary,
+                &beneficiary_amount,
+            );
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "settlement_accepted"), escrow_id),
+            (payer_amount, beneficiary_amount),
+        );
+
+        Ok(())
+    }
+
+    /// Read any pending settlement proposal for an escrow.
+    pub fn get_settlement_proposal(
+        env: Env,
+        escrow_id: u64,
+    ) -> Result<SettlementProposal, EscrowError> {
+        let key = DataKey::SettlementProposal(escrow_id);
+        env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::ProposalNotFound)
+    }
+
     // --- Cryptographic Hashlock HTLC Conditional Release (Issue 65) ---
 
     pub fn set_hashlock(

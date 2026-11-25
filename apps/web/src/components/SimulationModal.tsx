@@ -44,6 +44,10 @@ export const ESCROW_CONTRACT_ERRORS: Record<number, { name: string; explanation:
   24: { name: "MigrationFailed", explanation: "The contract storage migration failed." },
   25: { name: "HourlyVolumeLimitExceeded", explanation: "The hourly escrow volume limit has been reached. Try a smaller amount or wait and retry later." },
   26: { name: "InvalidVolumeLimit", explanation: "The configured volume limit is invalid." },
+  27: { name: "ReentrancyDetected", explanation: "The contract blocked a re-entrant call. Retry the action without nesting escrow calls." },
+  28: { name: "InvalidPreimage", explanation: "The supplied preimage does not match this escrow's hashlock, so the release cannot proceed." },
+  29: { name: "HashlockNotSet", explanation: "This escrow has no hashlock configured, so hashlock release is unavailable." },
+  30: { name: "SecondaryBeneficiaryNotFound", explanation: "The escrow's secondary beneficiary could not be found, so fallback routing cannot be applied." },
 };
 
 /** Explanations for Soroban host error categories (`Error(<Type>, <Code>)`). */

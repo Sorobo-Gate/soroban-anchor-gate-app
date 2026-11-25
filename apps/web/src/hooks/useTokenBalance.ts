@@ -318,9 +318,15 @@ export function useTokenBalance(
   const error = account ? settled?.error ?? null : null;
   const loading = Boolean(account) && settled === null;
 
+  // With no wallet connected the hook reports the empty state directly, so the
+  // effect never has to reset state synchronously before fetching.
+  const activeSnapshot = account ? snapshot : null;
+  const activeError = account ? error : null;
+  const activeLoading = account ? loading : false;
+
   const check: BalanceCheck = !account
     ? { sufficient: false, reason: "no-wallet", alert: null }
-    : loading
+    : activeLoading
       ? { sufficient: false, reason: null, alert: null }
       : evaluateBalance(snapshot, amountBaseUnits, {
           tokenSymbol,
@@ -328,12 +334,15 @@ export function useTokenBalance(
         });
 
   return {
-    snapshot,
+    snapshot: activeSnapshot,
     check,
-    loading,
-    error,
-    canSubmit: Boolean(account) && !loading && !error && check.sufficient,
-    alert: error ? `Balance lookup failed: ${error}` : check.alert,
+    loading: activeLoading,
+    error: activeError,
+    canSubmit:
+      Boolean(account) && !activeLoading && !activeError && check.sufficient,
+    alert: activeError
+      ? `Balance lookup failed: ${activeError}`
+      : check.alert,
     refresh,
   };
 }

@@ -401,14 +401,17 @@ jobs:
         if: >-
           steps.version.outputs.skip != 'true' &&
           steps.version.outputs.is_mock != 'true' &&
-          env.DRY_RUN_INPUT != 'true' &&
-          env.NPM_TOKEN != ''
+          env.DRY_RUN_INPUT != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is not configured; skipping npm publish."
+            exit 0
+          fi
           cd "$SDK_DIR"
           npm ci
           npm run build

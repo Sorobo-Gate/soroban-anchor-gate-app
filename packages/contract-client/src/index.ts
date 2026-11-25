@@ -706,3 +706,6 @@ export * from "./simulation";
 export * from "./kyc";
 export * from "./polling";
 export * from "./time";
+export * from "./errors";
+export * from "./batch";
+export * from "./wallets";

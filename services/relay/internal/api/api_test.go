@@ -112,6 +112,26 @@ func TestAPIServer_AdminPauseAuthenticationAndControl(t *testing.T) {
 	}
 }
 
+func TestAPIServer_AdminPauseFailsClosedWithoutAdminKey(t *testing.T) {
+	t.Setenv("ADMIN_API_KEY", "")
+	st := store.NewMemoryStore(100)
+	srv := NewServer("CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT", "https://soroban-testnet.stellar.org", st)
+	handler := srv.Handler()
+
+	// Even with the legacy fallback token, unconfigured admin auth must fail closed (401).
+	req := httptest.NewRequest(http.MethodPost, "/admin/pause", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized when ADMIN_API_KEY is unset, got %d", rec.Code)
+	}
+	if srv.IsPaused() {
+		t.Fatalf("expected relay not to be paused when ADMIN_API_KEY is unset")
+	}
+}
+
 func TestAPIServer_EscrowsQueryEndpoint(t *testing.T) {
 	st := store.NewMemoryStore(100)
 	srv := NewServer("CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT", "https://soroban-testnet.stellar.org", st)
