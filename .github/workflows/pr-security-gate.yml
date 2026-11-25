@@ -40,7 +40,7 @@ jobs:
       scope_report: ${{ steps.check.outputs.scope_report }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Validate PR ↔ Issue linkage and Scope
         id: check
@@ -62,7 +62,7 @@ jobs:
       scan_report: ${{ steps.verdict.outputs.scan_report }}
     steps:
       - name: Checkout base repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -296,7 +296,7 @@ jobs:
     if: always()
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: "Enforce Gate: Report & Auto-Close if Malicious/Non-compliant"
         env:
