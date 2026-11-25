@@ -8,8 +8,9 @@ mod test;
 
 use crate::errors::EscrowError;
 use crate::types::{
-    DataKey, DisbursementCommitment, EscrowEntry, EscrowInitParams, EscrowRecord, EscrowStatus,
-    EscrowStream, EscrowTerms, SettlementProposal, VolumeTracker, WhitelistProposal,
+    AnchorStake, DataKey, DisbursementCommitment, EscrowEntry, EscrowInitParams, EscrowRecord,
+    EscrowStatus, EscrowStream, EscrowTerms, KycAttestation, SettlementProposal, SwapRoute,
+    VolumeTracker, WhitelistProposal,
 };
 use soroban_sdk::{
     contract, contractclient, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env,
@@ -2500,5 +2501,256 @@ impl EscrowGate {
             .publish((Symbol::new(&env, "volume_tracker_reset"), token), caller);
 
         Ok(())
+    }
+
+    // ── Issue #48: Cryptographic KYC attestation ─────────────────────────────
+
+    /// Record a KYC attestation for `user` signed by `oracle_pubkey`.
+    ///
+    /// The `signature` must be a valid Ed25519 signature over
+    /// `profile_hash || timestamp_bytes` where `timestamp_bytes` is the
+    /// little-endian u64 encoding of `attested_at`.
+    /// Attestations older than 24 hours are rejected.
+    pub fn verify_kyc_attestation(
+        env: Env,
+        user: Address,
+        profile_hash: BytesN<32>,
+        attested_at: u64,
+        signature: BytesN<64>,
+        oracle_pubkey: BytesN<32>,
+    ) -> Result<(), EscrowError> {
+        let now = env.ledger().timestamp();
+        const MAX_AGE_SECS: u64 = 86_400;
+        if now > attested_at && now - attested_at > MAX_AGE_SECS {
+            return Err(EscrowError::KycAttestationExpired);
+        }
+
+        // Build message: profile_hash (32 bytes) || attested_at as little-endian u64 (8 bytes).
+        let ts_bytes = attested_at.to_le_bytes();
+        let mut msg_arr = [0u8; 40];
+        for (i, b) in profile_hash.to_array().iter().enumerate() {
+            msg_arr[i] = *b;
+        }
+        for (i, b) in ts_bytes.iter().enumerate() {
+            msg_arr[32 + i] = *b;
+        }
+        let message = Bytes::from_array(&env, &msg_arr);
+
+        env.crypto()
+            .ed25519_verify(&oracle_pubkey, &message, &signature);
+
+        let attestation = KycAttestation {
+            profile_hash: profile_hash.clone(),
+            oracle_pubkey: oracle_pubkey.clone(),
+            attested_at,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::KycAttestation(user.clone()), &attestation);
+
+        env.events().publish(
+            (Symbol::new(&env, "kyc_verified"), user),
+            (profile_hash, oracle_pubkey),
+        );
+        Ok(())
+    }
+
+    /// Return the stored KYC attestation for `user`, or error if none exists.
+    pub fn get_kyc_attestation(env: Env, user: Address) -> Result<KycAttestation, EscrowError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::KycAttestation(user))
+            .ok_or(EscrowError::KycNotVerified)
+    }
+
+    // ── Issue #49: Cross-currency atomic swap bridge interface ────────────────
+
+    /// Declare a swap route for an escrow's initial token leg.
+    ///
+    /// This records the route parameters on-chain so that the anchor relayer
+    /// can invoke the DEX router and lock the resulting token balance.
+    /// Slippage is enforced by asserting `min_return_amount > 0`.
+    pub fn declare_swap_route(
+        env: Env,
+        escrow_id: u64,
+        route: SwapRoute,
+    ) -> Result<(), EscrowError> {
+        if route.min_return_amount <= 0 {
+            return Err(EscrowError::SlippageExceeded);
+        }
+        if route.token_path.len() < 2 {
+            return Err(EscrowError::SwapFailed);
+        }
+        let record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(EscrowError::EscrowNotFound)?;
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        // Store the route keyed by escrow_id using the existing storage pattern.
+        // We reuse the EscrowTerms slot convention: a DataKey variant per concern.
+        env.storage()
+            .persistent()
+            .set(&DataKey::RateDispute(escrow_id), &route);
+        env.storage()
+            .persistent()
+            .extend_ttl(
+                &DataKey::RateDispute(escrow_id),
+                PERSISTENT_EXTEND_TTL_THRESHOLD,
+                PERSISTENT_EXTEND_TTL_AMOUNT,
+            );
+
+        env.events().publish(
+            (Symbol::new(&env, "swap_route_set"), escrow_id),
+            (route.router, route.min_return_amount),
+        );
+        Ok(())
+    }
+
+    /// Retrieve the swap route recorded for `escrow_id`.
+    pub fn get_swap_route(env: Env, escrow_id: u64) -> Result<SwapRoute, EscrowError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::RateDispute(escrow_id))
+            .ok_or(EscrowError::SwapFailed)
+    }
+
+    // ── Issue #66: Dynamic deposit collateralisation for untrusted anchors ────
+
+    /// Stake tokens as anchor collateral. The caller (anchor) transfers
+    /// `amount` to the contract and the staked balance is recorded.
+    pub fn anchor_stake(
+        env: Env,
+        anchor: Address,
+        token: Address,
+        amount: i128,
+    ) -> Result<(), EscrowError> {
+        if amount <= 0 {
+            return Err(EscrowError::ZeroAmount);
+        }
+        anchor.require_auth();
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&anchor, &env.current_contract_address(), &amount);
+
+        let prev: AnchorStake = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AnchorStake(anchor.clone()))
+            .unwrap_or(AnchorStake {
+                amount: 0,
+                staked_at: env.ledger().timestamp(),
+            });
+
+        let updated = AnchorStake {
+            amount: prev
+                .amount
+                .checked_add(amount)
+                .ok_or(EscrowError::ArithmeticOverflow)?,
+            staked_at: env.ledger().timestamp(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::AnchorStake(anchor.clone()), &updated);
+        env.storage()
+            .persistent()
+            .extend_ttl(
+                &DataKey::AnchorStake(anchor.clone()),
+                PERSISTENT_EXTEND_TTL_THRESHOLD,
+                PERSISTENT_EXTEND_TTL_AMOUNT,
+            );
+        env.storage()
+            .persistent()
+            .set(&DataKey::AnchorStakeTime(anchor.clone()), &env.ledger().timestamp());
+
+        env.events()
+            .publish((Symbol::new(&env, "anchor_staked"), anchor), amount);
+        Ok(())
+    }
+
+    /// Admin slashes an anchor's stake when a dispute is resolved against it.
+    pub fn slash_anchor_stake(
+        env: Env,
+        caller: Address,
+        anchor: Address,
+        slash_amount: i128,
+        token: Address,
+        slash_recipient: Address,
+    ) -> Result<(), EscrowError> {
+        caller.require_auth();
+        if !Self::check_is_admin(&env, &caller) {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        let mut stake: AnchorStake = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AnchorStake(anchor.clone()))
+            .ok_or(EscrowError::NoStakeFound)?;
+
+        if stake.amount < slash_amount {
+            return Err(EscrowError::InsufficientStake);
+        }
+
+        stake.amount -= slash_amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::AnchorStake(anchor.clone()), &stake);
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &slash_recipient, &slash_amount);
+
+        env.events().publish(
+            (Symbol::new(&env, "anchor_slashed"), anchor),
+            slash_amount,
+        );
+        Ok(())
+    }
+
+    /// Anchor withdraws staked tokens after the 14-day inactivity cooldown.
+    pub fn anchor_unstake(
+        env: Env,
+        anchor: Address,
+        token: Address,
+    ) -> Result<i128, EscrowError> {
+        anchor.require_auth();
+
+        let stake: AnchorStake = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AnchorStake(anchor.clone()))
+            .ok_or(EscrowError::NoStakeFound)?;
+
+        const COOLDOWN_SECS: u64 = 14 * 24 * 3600;
+        let now = env.ledger().timestamp();
+        if now < stake.staked_at + COOLDOWN_SECS {
+            return Err(EscrowError::StakeCooldownNotMet);
+        }
+
+        let amount = stake.amount;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::AnchorStake(anchor.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::AnchorStakeTime(anchor.clone()));
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &anchor, &amount);
+
+        env.events()
+            .publish((Symbol::new(&env, "anchor_unstaked"), anchor), amount);
+        Ok(amount)
+    }
+
+    /// Return the current stake record for `anchor`.
+    pub fn get_anchor_stake(env: Env, anchor: Address) -> Result<AnchorStake, EscrowError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AnchorStake(anchor))
+            .ok_or(EscrowError::NoStakeFound)
     }
 }

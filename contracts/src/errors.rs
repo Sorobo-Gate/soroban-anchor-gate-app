@@ -39,4 +39,15 @@ pub enum EscrowError {
     HashlockNotSet = 29,
     // Secondary beneficiary fallback routing (Issue 64)
     SecondaryBeneficiaryNotFound = 30,
+    // Cryptographic KYC attestation (Issue 48)
+    InvalidKycSignature = 31,
+    KycAttestationExpired = 32,
+    KycNotVerified = 33,
+    // Cross-currency atomic swap bridge (Issue 49)
+    SwapFailed = 34,
+    SlippageExceeded = 35,
+    // Dynamic anchor collateralisation (Issue 66)
+    InsufficientStake = 36,
+    StakeCooldownNotMet = 37,
+    NoStakeFound = 38,
 }
