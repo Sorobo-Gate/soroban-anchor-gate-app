@@ -1,0 +1,49 @@
+groups:
+  - name: soroban_relay_alerts
+    rules:
+      - alert: RelayLedgerSyncLag
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(ledger_processing_duration_seconds_bucket[5m]))
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: soroban-relay
+        annotations:
+          summary: "Soroban relay ledger processing latency is lagging"
+          description: "p95 ledger processing duration has exceeded 5s for 5 minutes (current value: {{ $value | printf \"%.2f\" }}s)."
+
+      - alert: RelayLedgerSyncStalled
+        expr: |
+          rate(rpc_errors_total{method="getLatestLedger"}[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: critical
+          service: soroban-relay
+        annotations:
+          summary: "Soroban relay getLatestLedger RPC calls are failing"
+          description: "The relay is experiencing persistent getLatestLedger RPC failures (>0.1 req/s) and may be lagging behind Stellar ledger height."
+
+      - alert: RelayHighRPCErrorRate
+        expr: |
+          sum(rate(rpc_errors_total[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: soroban-relay
+        annotations:
+          summary: "High Soroban RPC error rate detected"
+          description: "Total RPC error rate across all methods exceeded 0.5 errors/sec over the last 5 minutes."
+
+      - alert: RelayEscrowProcessingFailures
+        expr: |
+          sum(rate(escrow_events_total{status="failed"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: soroban-relay
+        annotations:
+          summary: "Soroban relay is failing to process escrow events"
+          description: "Escrow event processing failures are occurring at {{ $value | printf \"%.3f\" }} events/sec."

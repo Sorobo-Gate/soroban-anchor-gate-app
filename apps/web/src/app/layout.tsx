@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ToastContainer } from "@/components/ui/Toast";
+import { I18nProvider } from "@/locales";
 
 export const metadata: Metadata = {
   title: "SorobanAnchor Gate — Milestone Escrow & Stellar Bridge",
@@ -16,8 +17,10 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased font-sans">
       <body className="min-h-full flex flex-col">
-        {children}
-        <ToastContainer />
+        <I18nProvider>
+          {children}
+          <ToastContainer />
+        </I18nProvider>
       </body>
     </html>
   );

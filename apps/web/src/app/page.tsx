@@ -36,7 +36,9 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { MobileNav } from "@/components/MobileNav";
+import { LanguageSelector } from "@/components/LanguageSelector";
 import { PaymentQR } from "@/components/PaymentQR";
+import { useI18n } from "@/locales";
 import {
   SimulationModal,
   runPreflightSimulation,
@@ -68,6 +70,7 @@ export type EscrowStatusState =
   | "failed";
 
 export default function HomePage() {
+  const { t } = useI18n();
   const config = getAppConfig();
   const [activeTab, setActiveTab] = useState<"create" | "manage">("create");
   const [walletAddress, setWalletAddress] = useState<string>("");
@@ -384,7 +387,8 @@ export default function HomePage() {
             <SorobanAnchorLogo size={42} />
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <LanguageSelector />
             {walletAddress ? (
               <div className="flex items-center gap-2 bg-input border border-border px-4 py-2 rounded-xl text-xs font-mono text-primary">
                 <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
@@ -395,7 +399,7 @@ export default function HomePage() {
             ) : (
               <Button onClick={handleConnectWallet} disabled={loading}>
                 <Wallet className="w-4 h-4 mr-2" />
-                <span>{loading ? "Connecting..." : "Connect Freighter"}</span>
+                <span>{loading ? t("common.connecting") : t("common.connectWallet")}</span>
               </Button>
             )}
           </div>
@@ -410,20 +414,20 @@ export default function HomePage() {
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-primary/10 text-brand-gate border border-primary/20 uppercase font-mono">
-                  Stellar Testnet
+                  {t("common.networkTestnet")}
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-secondary text-secondary-foreground border border-border font-mono">
-                  Contract Fee: 200 BPS (2.0%)
+                  {t("common.contractFee")}
                 </span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-                Soroban Anchor Gate & Escrow Bridge
+                {t("hero.title")}
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Create &bull; Manage &bull; Track &bull; Settle Escrows on Stellar
+                {t("hero.subtitle")}
               </p>
               <p className="text-xs text-muted-foreground/80 mt-2">
-                Authoritative Contract:{" "}
+                {t("common.authoritativeContract")}{" "}
                 <a
                   href={`https://stellar.expert/explorer/testnet/contract/${config.contractId}`}
                   target="_blank"
@@ -438,16 +442,16 @@ export default function HomePage() {
 
             <div className="hidden lg:flex items-center gap-6 text-xs text-muted-foreground border-l border-border/60 pl-6">
               <div>
-                <div className="font-semibold text-foreground">Freighter Wallet</div>
-                <div className="text-[10px] text-brand-gate uppercase tracking-wider font-mono">Verified Onchain</div>
+                <div className="font-semibold text-foreground">{t("hero.freighterTitle")}</div>
+                <div className="text-[10px] text-brand-gate uppercase tracking-wider font-mono">{t("hero.freighterBadge")}</div>
               </div>
               <div>
-                <div className="font-semibold text-foreground">Escrow Management</div>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">Simple & Secure</div>
+                <div className="font-semibold text-foreground">{t("hero.escrowTitle")}</div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">{t("hero.escrowBadge")}</div>
               </div>
               <div>
-                <div className="font-semibold text-foreground">Onchain Transparency</div>
-                <div className="text-[10px] text-brand-gate uppercase tracking-wider font-mono">Real-Time Data</div>
+                <div className="font-semibold text-foreground">{t("hero.transparencyTitle")}</div>
+                <div className="text-[10px] text-brand-gate uppercase tracking-wider font-mono">{t("hero.transparencyBadge")}</div>
               </div>
             </div>
           </div>
@@ -464,7 +468,7 @@ export default function HomePage() {
             }`}
           >
             <Lock className="w-4 h-4" />
-            <span>Deposit Milestone Escrow</span>
+            <span>{t("tabs.deposit")}</span>
           </button>
           <button
             onClick={() => setActiveTab("manage")}
@@ -475,7 +479,7 @@ export default function HomePage() {
             }`}
           >
             <History className="w-4 h-4" />
-            <span>Manage Escrow (Release / Refund / Dispute)</span>
+            <span>{t("tabs.manage")}</span>
           </button>
         </div>
 
@@ -490,9 +494,9 @@ export default function HomePage() {
                     <Lock className="w-5 h-5" />
                   </div>
                   <div>
-                    <CardTitle>Deposit Milestone Escrow</CardTitle>
+                    <CardTitle>{t("escrowForm.cardTitle")}</CardTitle>
                     <CardDescription>
-                      Lock SAC tokens onchain with cryptographic SEP-31 anchor routing commitment.
+                      {t("escrowForm.cardDescription")}
                     </CardDescription>
                   </div>
                 </div>
@@ -501,7 +505,7 @@ export default function HomePage() {
                 <form onSubmit={handleCreateEscrow} className="space-y-5">
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Beneficiary Stellar Public Key
+                      {t("escrowForm.beneficiaryLabel")}
                     </label>
                     <Input
                       type="text"
@@ -517,7 +521,7 @@ export default function HomePage() {
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
                       <Coins className="w-3.5 h-3.5" />
-                      Select Token Asset
+                      {t("escrowForm.tokenAssetLabel")}
                     </label>
                     <div className="flex gap-2">
                       <button
@@ -529,7 +533,7 @@ export default function HomePage() {
                             : "bg-input/40 border-border text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        Native SAC (XLM)
+                        {t("escrowForm.presetXlm")}
                       </button>
                       <button
                         type="button"
@@ -540,7 +544,7 @@ export default function HomePage() {
                             : "bg-input/40 border-border text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        USDC SAC
+                        {t("escrowForm.presetUsdc")}
                       </button>
                       <button
                         type="button"
@@ -551,7 +555,7 @@ export default function HomePage() {
                             : "bg-input/40 border-border text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        Custom Token (C...)
+                        {t("escrowForm.presetCustom")}
                       </button>
                     </div>
                   </div>
@@ -559,7 +563,7 @@ export default function HomePage() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Amount (Tokens)
+                        {t("escrowForm.amountLabel")}
                       </label>
                       <Input
                         type="number"
@@ -573,7 +577,7 @@ export default function HomePage() {
 
                     <div className="space-y-2">
                       <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Lock Duration (Days)
+                        {t("escrowForm.lockDurationLabel")}
                       </label>
                       <Input
                         type="number"
@@ -586,17 +590,17 @@ export default function HomePage() {
 
                     <div className="space-y-2">
                       <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Est. Protocol Fee (2.0%)
+                        {t("escrowForm.protocolFeeLabel")}
                       </label>
                       <div className="h-11 flex items-center px-4 rounded-xl border border-border bg-muted/40 font-mono text-sm text-muted-foreground">
-                        {amount ? `${protocolFeeEst} tokens` : "0.00 tokens"}
+                        {t("escrowForm.tokensUnit", { amount: amount ? protocolFeeEst : "0.00" })}
                       </div>
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      SAC Token Contract Address
+                      {t("escrowForm.tokenAddressLabel")}
                     </label>
                     <Input
                       type="text"
@@ -609,7 +613,7 @@ export default function HomePage() {
 
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Off-Ramp Target (SEP-9 / SEP-31 Banking Coordinates)
+                      {t("escrowForm.routingLabel")}
                     </label>
                     <Input
                       type="text"
@@ -963,7 +967,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-border/80 py-6 bg-card/40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
-          <span>SorobanAnchor Gate — Non-Custodial Milestone Escrow & Anchor Bridge</span>
+          <span>{t("common.footerTagline")}</span>
           <div className="flex items-center gap-4">
             <a
               href="https://github.com/Sorobo-Gate/soroban-anchor-gate-contract"
@@ -971,7 +975,7 @@ export default function HomePage() {
               rel="noreferrer"
               className="hover:text-primary transition"
             >
-              Contract Repo
+              {t("common.contractRepo")}
             </a>
             <a
               href="https://github.com/Sorobo-Gate/soroban-anchor-gate-app"
@@ -979,7 +983,7 @@ export default function HomePage() {
               rel="noreferrer"
               className="hover:text-primary transition"
             >
-              App Repo
+              {t("common.appRepo")}
             </a>
           </div>
         </div>
