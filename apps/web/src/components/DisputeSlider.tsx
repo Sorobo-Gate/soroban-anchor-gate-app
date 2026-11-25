@@ -142,11 +142,12 @@ export function DisputeSlider({
   className,
 }: DisputeSliderProps) {
   const { payerPct, beneficiaryPct } = computeSplit(payerBps);
+  const sliderId = React.useId();
   return (
     <Card className={className}>
       <CardHeader>
         <CardTitle className="flex items-center gap-1.5">
-          <Scale className="w-4 h-4 text-primary" />
+          <Scale className="w-4 h-4 text-primary" aria-hidden="true" />
           Settlement Split
         </CardTitle>
         <CardDescription>
@@ -165,16 +166,25 @@ export function DisputeSlider({
           </div>
         </div>
         <div className="space-y-1">
+          <label htmlFor={sliderId} className="sr-only">
+            Settlement split percentage for payer
+          </label>
           <input
+            id={sliderId}
             type="range"
             min="0"
             max={MAX_BPS}
             step={SLIDER_STEP}
             value={payerBps}
             onChange={(e) => onChange(Number(e.target.value))}
-            className="w-full accent-primary h-2"
+            aria-label="Settlement split percentage for payer"
+            aria-valuemin={0}
+            aria-valuemax={MAX_BPS}
+            aria-valuenow={payerBps}
+            aria-valuetext={`${payerPct.toFixed(0)}% payer, ${beneficiaryPct.toFixed(0)}% beneficiary`}
+            className="w-full accent-primary h-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
           />
-          <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
+          <div className="flex justify-between text-[10px] text-muted-foreground font-mono" aria-hidden="true">
             <span>0%</span>
             <span>50%</span>
             <span>100%</span>

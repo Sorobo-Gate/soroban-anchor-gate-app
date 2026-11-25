@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+apps/
+contracts/
+docs/
+evidence/
+packages/
+services/relay/relay
+services/relay/data
+*.md

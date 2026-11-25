@@ -4,8 +4,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import { getAddress, getNetworkDetails, isConnected, requestAccess, signTransaction } from "@stellar/freighter-api";
 import { Address, Contract, rpc, scValToNative } from "@stellar/stellar-sdk";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { EscrowWizard } from "@/components/wizard/EscrowWizard";
+import { DesktopNav, MobileNav } from "@/components/MobileNav";
+import { SorobanAnchorLogo } from "@/components/Logo";
 import { getAppConfig } from "@/lib/config";
 import { hashRoutingInfo } from "@/lib/crypto";
 import {
@@ -106,29 +108,40 @@ export default function CreateEscrowPage() {
   };
 
   return (
-    <main className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <CardTitle>Create Escrow</CardTitle>
-              <CardDescription>Four guided steps to lock funds with an anchor routing commitment.</CardDescription>
-            </div>
-            {!wallet && <Button onClick={connect}>Connect Freighter</Button>}
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <header className="border-b border-border/80 bg-card/60 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <MobileNav brand={<SorobanAnchorLogo size={32} />} />
+            <SorobanAnchorLogo size={36} showSubtitle={false} />
           </div>
-        </CardHeader>
-        <CardContent>
-          <EscrowWizard
-            walletAddress={wallet}
-            tokens={TOKENS}
-            fetchBalance={fetchBalance}
-            simulate={simulate}
-            onSubmit={submit}
-            busy={busy}
-            statusMessage={message}
-          />
-        </CardContent>
-      </Card>
-    </main>
+          <DesktopNav />
+        </div>
+      </header>
+      <main id="main-content" tabIndex={-1} className="max-w-3xl mx-auto px-4 sm:px-6 py-8 w-full flex-1">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h1 className="text-lg font-semibold leading-none tracking-tight text-foreground">Create Escrow</h1>
+                <CardDescription>Four guided steps to lock funds with an anchor routing commitment.</CardDescription>
+              </div>
+              {!wallet && <Button type="button" onClick={connect}>Connect Freighter</Button>}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <EscrowWizard
+              walletAddress={wallet}
+              tokens={TOKENS}
+              fetchBalance={fetchBalance}
+              simulate={simulate}
+              onSubmit={submit}
+              busy={busy}
+              statusMessage={message}
+            />
+          </CardContent>
+        </Card>
+      </main>
+    </div>
   );
 }

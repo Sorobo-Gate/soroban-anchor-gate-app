@@ -1,0 +1,200 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Soroban Anchor Gate Relay Administrative & Monitoring API",
+    "description": "Secured REST API for daemon sync inspection, operational pausing, escrow queries, and lifecycle event monitoring.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local Relay Daemon Service"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "APIKey",
+        "description": "Pass admin API key via 'Authorization: Bearer <key>'"
+      },
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Pass admin API key via 'X-API-Key' header"
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "ok" },
+          "contract_id": { "type": "string", "example": "CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT" },
+          "current_cursor": { "type": "integer", "example": 5000 },
+          "uptime_seconds": { "type": "integer", "example": 3600 },
+          "timestamp": { "type": "integer", "example": 1700000000 }
+        },
+        "required": ["status", "contract_id", "current_cursor", "uptime_seconds", "timestamp"]
+      },
+      "StatusResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "running" },
+          "contract_id": { "type": "string", "example": "CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT" },
+          "rpc_url": { "type": "string", "example": "https://soroban-testnet.stellar.org" },
+          "current_cursor": { "type": "integer", "example": 5000 },
+          "uptime": { "type": "string", "example": "1h0m0s" },
+          "total_events": { "type": "integer", "example": 42 },
+          "paused": { "type": "boolean", "example": false }
+        },
+        "required": ["status", "contract_id", "rpc_url", "current_cursor", "uptime", "total_events", "paused"]
+      },
+      "PauseRequest": {
+        "type": "object",
+        "properties": {
+          "paused": { "type": "boolean", "example": true }
+        }
+      },
+      "PauseResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "paused" },
+          "paused": { "type": "boolean", "example": true },
+          "timestamp": { "type": "integer", "example": 1700000000 }
+        },
+        "required": ["status", "paused", "timestamp"]
+      },
+      "EscrowResponse": {
+        "type": "object",
+        "properties": {
+          "escrow_id": { "type": "string", "example": "1" },
+          "contract_id": { "type": "string", "example": "CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT" },
+          "status": { "type": "string", "example": "funded" },
+          "amount": { "type": "string", "example": "100.0000000" },
+          "payer": { "type": "string", "example": "GBZXN7PIRZGNMHGA728KLMS729DNMC718290" },
+          "beneficiary": { "type": "string", "example": "GD2C7N6B37L4Y3T5G6D7H8J9K0L1M2N3P4Q5R6S7" },
+          "profile_hash": { "type": "string", "example": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+          "created_at_ledger": { "type": "integer", "example": 4900 }
+        },
+        "required": ["escrow_id", "contract_id", "status", "amount", "payer", "beneficiary", "profile_hash"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "example": "unauthorized" },
+          "message": { "type": "string", "example": "missing or invalid admin API key" }
+        },
+        "required": ["error", "message"]
+      }
+    }
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Kubernetes / Load Balancer Health Probe",
+        "responses": {
+          "200": {
+            "description": "Daemon is healthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Relay Sync & Operational Status",
+        "responses": {
+          "200": {
+            "description": "Current sync cursor, uptime, and paused status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/StatusResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/pause": {
+      "post": {
+        "summary": "Pause or Resume Relay Ingestion (Admin Only)",
+        "security": [
+          { "BearerAuth": [] },
+          { "ApiKeyAuth": [] }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PauseRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pause status updated successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PauseResponse" }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid admin API key",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/escrows/{id}": {
+      "get": {
+        "summary": "Query Escrow Details by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Numerical Escrow Counter ID",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Escrow found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EscrowResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid escrow ID format",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Escrow not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

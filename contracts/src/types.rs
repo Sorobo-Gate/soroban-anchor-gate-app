@@ -33,6 +33,8 @@ pub struct EscrowInitParams {
     pub cancellation_penalty_bps: u32,
     pub referrer: Option<Address>,
     pub committed_rate: Option<i128>,
+    pub hashlock: Option<BytesN<32>>,
+    pub secondary_beneficiary: Option<Address>,
 }
 
 #[contracttype]
@@ -42,6 +44,8 @@ pub struct EscrowTerms {
     pub cancellation_penalty_bps: u32,
     pub referrer: Option<Address>,
     pub committed_rate: Option<i128>,
+    pub hashlock: Option<BytesN<32>>,
+    pub secondary_beneficiary: Option<Address>,
 }
 
 #[contracttype]
@@ -99,6 +103,15 @@ pub struct VolumeTracker {
     pub volume: i128,
 }
 
+/// Settlement proposal for mutual split between payer and beneficiary.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementProposal {
+    pub escrow_id: u64,
+    pub proposer: Address,
+    pub payer_bps: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -131,4 +144,10 @@ pub enum DataKey {
     RateDispute(u64),
     StreamCounter,
     Stream(u64),
+    // Cross-contract reentrancy lock (Issue 67)
+    ReentrancyLock,
+    // Cryptographic hashlock HTLC release (Issue 65)
+    Hashlock(u64),
+    // Secondary beneficiary fallback routing (Issue 64)
+    SecondaryBeneficiary(u64),
 }

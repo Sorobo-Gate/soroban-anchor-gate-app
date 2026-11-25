@@ -23,8 +23,8 @@ func TestEmbeddedSQLFiles(t *testing.T) {
 		t.Fatalf("LoadMigrations() failed: %v", err)
 	}
 
-	if len(migrations) < 2 {
-		t.Fatalf("expected at least 2 migrations, got %d", len(migrations))
+	if len(migrations) < 3 {
+		t.Fatalf("expected at least 3 migrations, got %d", len(migrations))
 	}
 
 	if migrations[0].Version != 1 || migrations[0].Name != "initial_schema" {
@@ -42,6 +42,16 @@ func TestEmbeddedSQLFiles(t *testing.T) {
 	}
 	if !strings.Contains(migrations[1].UpSQL, "CREATE TABLE IF NOT EXISTS anchor_transactions") {
 		t.Errorf("migration 2 UpSQL missing anchor_transactions table")
+	}
+
+	if migrations[2].Version != 3 || migrations[2].Name != "outbox_and_processed_ledgers" {
+		t.Errorf("migration 2 mismatch: got version=%d, name=%s", migrations[2].Version, migrations[2].Name)
+	}
+	if !strings.Contains(migrations[2].UpSQL, "CREATE TABLE IF NOT EXISTS outbox_events") {
+		t.Errorf("migration 3 UpSQL missing outbox_events table")
+	}
+	if !strings.Contains(migrations[2].UpSQL, "CREATE TABLE IF NOT EXISTS processed_ledgers") {
+		t.Errorf("migration 3 UpSQL missing processed_ledgers table")
 	}
 	if !strings.Contains(migrations[1].DownSQL, "DROP TABLE IF EXISTS anchor_transactions") {
 		t.Errorf("migration 2 DownSQL missing DROP TABLE")
@@ -298,13 +308,13 @@ func TestMigratorRunPendingAndRollback(t *testing.T) {
 		t.Fatalf("RunPending() failed: %v", err)
 	}
 
-	// Should now be at version 2, clean
+	// Should now be at version 3, clean
 	ver, dirty, err = migrator.GetVersion(ctx)
 	if err != nil {
 		t.Fatalf("GetVersion() unexpected error: %v", err)
 	}
-	if ver != 2 || dirty {
-		t.Fatalf("expected version 2 clean, got version=%d dirty=%v", ver, dirty)
+	if ver != 3 || dirty {
+		t.Fatalf("expected version 3 clean, got version=%d dirty=%v", ver, dirty)
 	}
 
 	// 3. Running pending again should be idempotent
@@ -312,7 +322,7 @@ func TestMigratorRunPendingAndRollback(t *testing.T) {
 		t.Fatalf("second RunPending() failed: %v", err)
 	}
 
-	// 4. Rollback latest migration (version 2 -> 1)
+	// 4. Rollback latest migration (version 3 -> 2)
 	if err := migrator.RollbackLatest(ctx); err != nil {
 		t.Fatalf("RollbackLatest() failed: %v", err)
 	}
@@ -320,23 +330,35 @@ func TestMigratorRunPendingAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetVersion() after rollback failed: %v", err)
 	}
-	if ver != 1 || dirty {
-		t.Fatalf("expected version 1 clean after rollback, got version=%d dirty=%v", ver, dirty)
+	if ver != 2 || dirty {
+		t.Fatalf("expected version 2 clean after rollback, got version=%d dirty=%v", ver, dirty)
 	}
 
-	// 5. Rollback again (version 1 -> 0)
-	if err := migrator.Down(ctx); err != nil {
-		t.Fatalf("Down() failed: %v", err)
+	// 5. Rollback latest migration (version 2 -> 1)
+	if err := migrator.RollbackLatest(ctx); err != nil {
+		t.Fatalf("RollbackLatest() failed: %v", err)
 	}
 	ver, dirty, err = migrator.GetVersion(ctx)
 	if err != nil {
 		t.Fatalf("GetVersion() after second rollback failed: %v", err)
 	}
-	if ver != 0 || dirty {
-		t.Fatalf("expected version 0 clean after second rollback, got version=%d dirty=%v", ver, dirty)
+	if ver != 1 || dirty {
+		t.Fatalf("expected version 1 clean after second rollback, got version=%d dirty=%v", ver, dirty)
 	}
 
-	// 6. Rollback when version is 0 is a clean no-op
+	// 6. Rollback again (version 1 -> 0)
+	if err := migrator.Down(ctx); err != nil {
+		t.Fatalf("Down() failed: %v", err)
+	}
+	ver, dirty, err = migrator.GetVersion(ctx)
+	if err != nil {
+		t.Fatalf("GetVersion() after third rollback failed: %v", err)
+	}
+	if ver != 0 || dirty {
+		t.Fatalf("expected version 0 clean after third rollback, got version=%d dirty=%v", ver, dirty)
+	}
+
+	// 7. Rollback when version is 0 is a clean no-op
 	if err := migrator.RollbackLatest(ctx); err != nil {
 		t.Fatalf("RollbackLatest() at version 0 returned error: %v", err)
 	}

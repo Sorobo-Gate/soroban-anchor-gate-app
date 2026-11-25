@@ -1,0 +1,138 @@
+/* Escrow Detail Record - High-Contrast Responsive Print Stylesheet for Physical Paper Records */
+
+@media print {
+  /* Hide non-printable interface chrome, navigation, wallets, and interactive buttons */
+  header,
+  footer,
+  nav,
+  button,
+  input,
+  select,
+  textarea,
+  [role="button"],
+  .no-print,
+  .print\:hidden,
+  .wallet-connect,
+  .wallet-status,
+  .interactive-action,
+  .navbar,
+  .action-buttons,
+  iframe,
+  video,
+  audio {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Paper setup and physical margin boundaries */
+  @page {
+    size: A4 portrait;
+    margin: 15mm 20mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt !important;
+    line-height: 1.5 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    filter: none !important;
+  }
+
+  /* High-contrast typography for legible physical paper archiving */
+  h1, h2, h3, h4, h5, h6 {
+    color: #000000 !important;
+    font-weight: 700 !important;
+    page-break-after: avoid;
+    break-after: avoid;
+    margin-top: 1rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+
+  p, span, td, th, li, label, div {
+    color: #111111 !important;
+  }
+
+  /* High-contrast cards, tables, and borders */
+  .card,
+  [class*="rounded-"],
+  [class*="border"] {
+    background: #ffffff !important;
+    border: 1px solid #000000 !important;
+    box-shadow: none !important;
+    color: #000000 !important;
+  }
+
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  th, td {
+    border: 1px solid #000000 !important;
+    padding: 6px 10px !important;
+    text-align: left !important;
+    color: #000000 !important;
+  }
+
+  th {
+    background: #f0f0f0 !important;
+    font-weight: bold !important;
+  }
+
+  /* QR code formatting for paper archiving */
+  .qr-code,
+  .qr-container,
+  [data-qr-code] {
+    display: block !important;
+    visibility: visible !important;
+    margin: 1rem auto !important;
+    text-align: center !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .qr-code img,
+  .qr-code svg,
+  .qr-container img,
+  .qr-container svg {
+    display: inline-block !important;
+    max-width: 160px !important;
+    height: auto !important;
+    border: 1px solid #000000 !important;
+    padding: 4px !important;
+    background: #ffffff !important;
+  }
+
+  /* Monospace for hashes, addresses, and identifiers */
+  code, pre, .font-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-size: 9pt !important;
+    color: #000000 !important;
+    word-break: break-all !important;
+  }
+
+  /* Render hyperlinks with target URLs for auditability */
+  a[href^="http"]::after,
+  a[href^="https"]::after {
+    content: " (" attr(href) ")";
+    font-size: 8pt !important;
+    font-family: ui-monospace, monospace !important;
+    word-break: break-all !important;
+    color: #222222 !important;
+  }
+
+  /* Keep essential record containers intact across pages */
+  .escrow-record,
+  .escrow-summary,
+  .escrow-details,
+  article,
+  section {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

@@ -737,7 +737,7 @@ export function EvidenceUpload({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
-              <UploadCloud className="w-5 h-5" />
+              <UploadCloud className="w-5 h-5" aria-hidden="true" />
             </div>
             <div>
               <CardTitle className="text-base font-semibold">
@@ -786,23 +786,26 @@ export function EvidenceUpload({
                 fileInputRef.current?.click();
               }
             }}
-            className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
+            className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-xl cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
               isDragging
                 ? "border-primary bg-primary/10 scale-[0.99]"
                 : "border-border/80 bg-input/30 hover:bg-input/60 hover:border-primary/50"
             } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
             role="button"
             tabIndex={disabled ? -1 : 0}
+            aria-disabled={disabled || state.status === "hashing" || state.status === "uploading"}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                fileInputRef.current?.click();
+                if (!disabled && state.status !== "hashing" && state.status !== "uploading") {
+                  fileInputRef.current?.click();
+                }
               }
             }}
             aria-label="Click or drag and drop dispute evidence file here"
           >
             <div className="p-3 rounded-full bg-primary/10 text-primary mb-3">
-              <FileUp className="w-6 h-6" />
+              <FileUp className="w-6 h-6" aria-hidden="true" />
             </div>
             <p className="text-sm font-medium text-foreground text-center">
               Click to browse or drag and drop evidence
@@ -817,7 +820,7 @@ export function EvidenceUpload({
             <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-input/40">
               <div className="flex items-center gap-3 overflow-hidden">
                 <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
-                  <FileText className="w-4 h-4" />
+                  <FileText className="w-4 h-4" aria-hidden="true" />
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs font-medium text-foreground truncate">
@@ -831,13 +834,14 @@ export function EvidenceUpload({
 
               {state.status !== "uploading" && state.status !== "hashing" && (
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                   onClick={handleReset}
                   aria-label="Remove selected file"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </Button>
               )}
             </div>
@@ -847,15 +851,15 @@ export function EvidenceUpload({
               <div className="p-3 rounded-xl border border-border/80 bg-input/20 space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-mono text-muted-foreground uppercase flex items-center gap-1">
-                    <Hash className="w-3 h-3" /> Client-side SHA-256 Hash
+                    <Hash className="w-3 h-3" aria-hidden="true" /> Client-side SHA-256 Hash
                   </span>
                   <button
                     type="button"
                     onClick={() => handleCopy(state.sha256 || "", "hash")}
-                    className="text-[10px] text-primary flex items-center gap-1 hover:underline cursor-pointer"
+                    className="text-[10px] text-primary flex items-center gap-1 hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1"
                     aria-label="Copy SHA-256 hash"
                   >
-                    <Copy className="w-2.5 h-2.5" />
+                    <Copy className="w-2.5 h-2.5" aria-hidden="true" />
                     {state.copiedField === "hash" ? "Copied" : "Copy"}
                   </button>
                 </div>
@@ -895,9 +899,9 @@ export function EvidenceUpload({
 
             {/* Success state: Decentralized Reference Metadata */}
             {state.status === "success" && state.metadata && (
-              <div className="p-3 rounded-xl border border-primary/30 bg-primary/5 space-y-2">
+              <div role="status" aria-live="polite" className="p-3 rounded-xl border border-primary/30 bg-primary/5 space-y-2">
                 <div className="flex items-center gap-2 text-primary text-xs font-semibold">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>Pinned to Decentralized Storage</span>
                 </div>
 
@@ -912,10 +916,10 @@ export function EvidenceUpload({
                         onClick={() =>
                           handleCopy(state.metadata?.cid || "", "cid")
                         }
-                        className="text-[10px] text-primary flex items-center gap-1 hover:underline cursor-pointer"
+                        className="text-[10px] text-primary flex items-center gap-1 hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1"
                         aria-label="Copy IPFS CID"
                       >
-                        <Copy className="w-2.5 h-2.5" />
+                        <Copy className="w-2.5 h-2.5" aria-hidden="true" />
                         {state.copiedField === "cid" ? "Copied" : "Copy CID"}
                       </button>
                     </div>
@@ -932,16 +936,18 @@ export function EvidenceUpload({
                       href={state.metadata.gatewayUrl}
                       target="_blank"
                       rel="noreferrer"
+                      aria-label="View evidence on IPFS (opens in new tab)"
                       className="text-xs text-primary flex items-center gap-1 hover:underline"
                     >
                       <span>View on IPFS</span>
-                      <ExternalLink className="w-3 h-3" />
+                      <ExternalLink className="w-3 h-3" aria-hidden="true" />
                     </a>
                   </div>
                 </div>
 
                 <div className="pt-2 flex gap-2">
                   <Button
+                    type="button"
                     variant="outline"
                     size="sm"
                     className="w-full text-xs"
@@ -955,16 +961,16 @@ export function EvidenceUpload({
 
             {/* Error Message */}
             {state.error && (
-              <div className="p-3 rounded-xl border border-destructive/20 bg-destructive/10 text-destructive text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div role="alert" className="p-3 rounded-xl border border-destructive/20 bg-destructive/10 text-destructive text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
                 <span className="flex-1">{state.error}</span>
                 <button
                   type="button"
                   onClick={() => dispatch({ type: "SET_ERROR", error: "" })}
-                  className="text-destructive/70 hover:text-destructive"
+                  className="text-destructive/70 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
                   aria-label="Dismiss error"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3 h-3" aria-hidden="true" />
                 </button>
               </div>
             )}
@@ -985,17 +991,17 @@ export function EvidenceUpload({
                 >
                   {state.status === "hashing" ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" aria-hidden="true" />
                       Computing SHA-256 Hash...
                     </>
                   ) : state.status === "uploading" ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" aria-hidden="true" />
                       Pinning to IPFS...
                     </>
                   ) : (
                     <>
-                      <FileCheck className="w-3.5 h-3.5 mr-2" />
+                      <FileCheck className="w-3.5 h-3.5 mr-2" aria-hidden="true" />
                       Pin Evidence to IPFS
                     </>
                   )}

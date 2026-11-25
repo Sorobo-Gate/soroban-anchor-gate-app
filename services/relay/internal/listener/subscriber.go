@@ -33,12 +33,14 @@ type EventPayload struct {
 }
 
 type EventSubscriber struct {
-	rpcURL     string
-	contractID string
-	httpClient *http.Client
-	store      store.IdempotencyStore
-	logger     *slog.Logger
-	metrics    *telemetry.Metrics
+	rpcURL       string
+	contractID   string
+	httpClient   *http.Client
+	store        store.IdempotencyStore
+	logger       *slog.Logger
+	metrics      *telemetry.Metrics
+	reconnectSM  *ReconnectStateMachine
+	pollInterval time.Duration
 }
 
 type RPCRequest struct {
@@ -128,11 +130,36 @@ type EventValue struct {
 
 func NewEventSubscriber(rpcURL, contractID string, st store.IdempotencyStore, logger *slog.Logger) *EventSubscriber {
 	return &EventSubscriber{
-		rpcURL:     rpcURL,
-		contractID: contractID,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		store:      st,
-		logger:     logger,
+		rpcURL:       rpcURL,
+		contractID:   contractID,
+		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		store:        st,
+		logger:       logger,
+		reconnectSM:  NewReconnectStateMachine(DefaultBackoffConfig()),
+		pollInterval: 4 * time.Second,
+	}
+}
+
+// WithBackoffConfig overrides the default exponential backoff configuration.
+func (s *EventSubscriber) WithBackoffConfig(cfg BackoffConfig) *EventSubscriber {
+	s.reconnectSM = NewReconnectStateMachine(cfg)
+	return s
+}
+
+// StateMachine returns the underlying ReconnectStateMachine.
+func (s *EventSubscriber) StateMachine() *ReconnectStateMachine {
+	return s.reconnectSM
+}
+
+// ConnectionState returns the active connection state.
+func (s *EventSubscriber) ConnectionState() ConnectionState {
+	return s.reconnectSM.State()
+}
+
+// SetPollInterval configures the normal polling interval.
+func (s *EventSubscriber) SetPollInterval(d time.Duration) {
+	if d > 0 {
+		s.pollInterval = d
 	}
 }
 
@@ -141,7 +168,80 @@ func (s *EventSubscriber) SetMetrics(metrics *telemetry.Metrics) {
 	s.metrics = metrics
 }
 
+// processAndEmitEvent parses an EventItem and dispatches it through idempotency store checks to the channel.
+func (s *EventSubscriber) processAndEmitEvent(ctx context.Context, eventItem EventItem, eventChan chan<- EventPayload) error {
+	payload, err := DecodeDisbursedEvent(eventItem, s.contractID)
+	if err != nil {
+		s.logger.Debug("Skipping unparseable or irrelevant event", "event_id", eventItem.ID, "reason", err)
+		return nil
+	}
+
+	if s.store.IsProcessed(payload.EventID) {
+		s.logger.Info("Duplicate event detected, skipping", "event_id", payload.EventID)
+		return nil
+	}
+
+	if err := s.store.RecordObserved(payload.EventID); err != nil {
+		s.logger.Debug("Event already observed", "event_id", payload.EventID, "error", err)
+	}
+
+	if err := s.store.ClaimForProcessing(payload.EventID); err != nil {
+		s.logger.Warn("Failed to claim event for processing", "event_id", payload.EventID, "error", err)
+		return nil
+	}
+
+	select {
+	case eventChan <- payload:
+		s.logger.Info("Disbursed event claimed and emitted to processing channel", "event_id", payload.EventID, "escrow_id", payload.EscrowID, "amount", payload.PayoutAmount.String())
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// BackfillMissedLedgers polls and processes events across a range of missed ledgers post-reconnection.
+func (s *EventSubscriber) BackfillMissedLedgers(ctx context.Context, fromLedger, toLedger uint32, eventChan chan<- EventPayload) error {
+	s.logger.Info("Starting missed ledgers backfill", "from_ledger", fromLedger, "to_ledger", toLedger)
+	cursor := fromLedger
+
+	for cursor <= toLedger {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		events, latest, err := s.fetchEventsFromRPC(ctx, cursor)
+		if err != nil {
+			return fmt.Errorf("backfill failed at ledger %d: %w", cursor, err)
+		}
+
+		for _, item := range events {
+			if err := s.processAndEmitEvent(ctx, item, eventChan); err != nil {
+				return err
+			}
+		}
+
+		if latest > cursor {
+			cursor = latest + 1
+			_ = s.store.SetCursor(latest)
+		} else {
+			cursor++
+			_ = s.store.SetCursor(cursor)
+		}
+
+		if latest >= toLedger {
+			break
+		}
+	}
+
+	s.logger.Info("Missed ledgers backfill complete", "final_cursor", s.store.GetCursor())
+	return nil
+}
+
 func (s *EventSubscriber) PollEvents(ctx context.Context, eventChan chan<- EventPayload) error {
+	s.reconnectSM.Transition(StateConnecting)
+
 	currentLedger := s.store.GetCursor()
 
 	// If the cursor is uninitialized (<= 1), initialize from the live network tip
@@ -155,14 +255,16 @@ func (s *EventSubscriber) PollEvents(ctx context.Context, eventChan chan<- Event
 		}
 	}
 
+	s.reconnectSM.RecordSuccess()
 	s.logger.Info("Starting Soroban RPC event polling", "contract_id", s.contractID, "start_ledger", s.store.GetCursor())
 
-	ticker := time.NewTicker(4 * time.Second)
+	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			s.reconnectSM.Transition(StateDisconnected)
 			return ctx.Err()
 		case <-ticker.C:
 			currentLedger := s.store.GetCursor()
@@ -189,36 +291,60 @@ func (s *EventSubscriber) PollEvents(ctx context.Context, eventChan chan<- Event
 					continue
 				}
 
-				s.logger.Error("Failed to fetch events from RPC", "error", err)
+				// Connection dropped or RPC failure: enter exponential backoff reconnect state machine
+				s.logger.Warn("Soroban RPC connection dropped, initiating resilient backoff reconnect", "error", err)
+				backoff := s.reconnectSM.RecordFailure(err)
+
+				for {
+					s.logger.Info("Waiting before RPC reconnect attempt",
+						"attempt", s.reconnectSM.Attempts(),
+						"backoff", backoff,
+					)
+					if wErr := s.reconnectSM.WaitForBackoff(ctx, backoff); wErr != nil {
+						s.reconnectSM.Transition(StateDisconnected)
+						return wErr
+					}
+
+					// Probe connectivity
+					latestTip, pErr := s.GetLatestLedger(ctx)
+					if pErr != nil {
+						s.logger.Warn("RPC reconnect probe failed",
+							"attempt", s.reconnectSM.Attempts(),
+							"error", pErr,
+						)
+						backoff = s.reconnectSM.RecordFailure(pErr)
+						continue
+					}
+
+					// Successfully reconnected
+					s.logger.Info("RPC reconnected successfully", "network_tip", latestTip)
+					lastConfirmed := s.store.GetCursor()
+
+					// Automatically backfill missed ledgers
+					if latestTip > lastConfirmed {
+						s.reconnectSM.Transition(StateBackfilling)
+						s.logger.Info("Backfilling missed ledgers post-reconnect",
+							"from_ledger", lastConfirmed,
+							"to_ledger", latestTip,
+						)
+						if bErr := s.BackfillMissedLedgers(ctx, lastConfirmed, latestTip, eventChan); bErr != nil {
+							s.logger.Error("Backfill failed during reconnect recovery, will retry", "error", bErr)
+							backoff = s.reconnectSM.RecordFailure(bErr)
+							continue
+						}
+					}
+
+					s.reconnectSM.RecordSuccess()
+					s.logger.Info("Reconnection and missed ledger backfill complete; resumed normal polling")
+					break
+				}
 				continue
 			}
 
+			// Connected state: process fetched events
 			for _, eventItem := range events {
-				payload, err := DecodeDisbursedEvent(eventItem, s.contractID)
-				if err != nil {
-					s.logger.Debug("Skipping unparseable or irrelevant event", "event_id", eventItem.ID, "reason", err)
-					continue
-				}
-
-				if s.store.IsProcessed(payload.EventID) {
-					s.logger.Info("Duplicate event detected, skipping", "event_id", payload.EventID)
-					continue
-				}
-
-				if err := s.store.RecordObserved(payload.EventID); err != nil {
-					s.logger.Debug("Event already observed", "event_id", payload.EventID, "error", err)
-				}
-
-				if err := s.store.ClaimForProcessing(payload.EventID); err != nil {
-					s.logger.Warn("Failed to claim event for processing", "event_id", payload.EventID, "error", err)
-					continue
-				}
-
-				select {
-				case eventChan <- payload:
-					s.logger.Info("Disbursed event claimed and emitted to processing channel", "event_id", payload.EventID, "escrow_id", payload.EscrowID, "amount", payload.PayoutAmount.String())
-				case <-ctx.Done():
-					return ctx.Err()
+				if err := s.processAndEmitEvent(ctx, eventItem, eventChan); err != nil {
+					return err
 				}
 			}
 

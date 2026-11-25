@@ -14,11 +14,14 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/soroban-anchor-gate/relay/internal/anchor"
 	"github.com/soroban-anchor-gate/relay/internal/api"
 	"github.com/soroban-anchor-gate/relay/internal/listener"
+	"github.com/soroban-anchor-gate/relay/internal/signer"
 	"github.com/soroban-anchor-gate/relay/internal/store"
 	"github.com/soroban-anchor-gate/relay/internal/store/migrations"
 	"github.com/soroban-anchor-gate/relay/internal/telemetry"
+	"github.com/soroban-anchor-gate/relay/internal/worker"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -29,6 +32,19 @@ func main() {
 	// Support CLI database migration subcommands: `relay migrate down`, `relay migrate up`, `relay migrate version`
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		handleMigrateCommand(logger, os.Args[2:])
+		return
+	}
+
+	// Support container HEALTHCHECK without curl/wget in distroless runtime images.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		apiPort := os.Getenv("PORT")
+		if apiPort == "" {
+			apiPort = "8080"
+		}
+		if err := checkHealth(fmt.Sprintf("http://127.0.0.1:%s/health", apiPort)); err != nil {
+			logger.Error("Relay healthcheck failed", "error", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -120,7 +136,8 @@ func main() {
 		}
 	}()
 
-	// Run pending database migrations atomically before listener initialization if DATABASE_URL is configured
+	// Initialize transactional outbox store (PostgreSQL if DATABASE_URL configured, otherwise in-memory)
+	var outboxStore store.OutboxStore
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL != "" {
 		logger.Info("DATABASE_URL configured; running pending database migrations")
@@ -140,6 +157,77 @@ func main() {
 		}
 		migCancel()
 		logger.Info("Automated database migrations completed successfully")
+		outboxStore = store.NewPostgresOutboxStore(db)
+	} else {
+		outboxStore = store.NewMemoryOutboxStore()
+	}
+
+	// Initialize background outbox worker with advisory locking
+	outboxBatchSize := 10
+	if s := os.Getenv("OUTBOX_BATCH_SIZE"); s != "" {
+		if val, err := strconv.Atoi(s); err == nil && val > 0 {
+			outboxBatchSize = val
+		}
+	}
+	outboxWorker := worker.NewOutboxWorker(outboxStore, func(workerCtx context.Context, ev store.OutboxEvent) error {
+		logger.Info("Outbox worker processing event",
+			"event_id", ev.EventID,
+			"event_type", ev.EventType,
+		)
+		return nil
+	}, worker.OutboxWorkerConfig{
+		BatchSize:      outboxBatchSize,
+		PollInterval:   500 * time.Millisecond,
+		AdvisoryLockID: 737475,
+		MaxRetries:     5,
+	}, logger)
+	outboxWorker.SetMetrics(metrics)
+	if err := outboxWorker.Start(ctx); err != nil {
+		logger.Error("Failed to start outbox background worker", "error", err)
+	}
+	defer outboxWorker.Stop()
+
+	// Initialize SEP-10 web authentication client if configured
+	anchorDomain := os.Getenv("ANCHOR_DOMAIN")
+	anchorAuthEndpoint := os.Getenv("ANCHOR_AUTH_ENDPOINT")
+	if anchorDomain != "" || anchorAuthEndpoint != "" {
+		var keyMgr signer.KeyManager
+		if hexKey := os.Getenv("RELAY_SIGNER_KEY"); hexKey != "" {
+			km, kErr := signer.NewEnvKeyManagerFromHex(hexKey)
+			if kErr != nil {
+				logger.Error("Failed to parse RELAY_SIGNER_KEY, generating ephemeral key", "error", kErr)
+				keyMgr, _ = signer.GenerateEphemeralKeyManager()
+			} else {
+				keyMgr = km
+			}
+		} else {
+			keyMgr, _ = signer.GenerateEphemeralKeyManager()
+		}
+
+		clientAccount := os.Getenv("RELAY_CLIENT_ACCOUNT")
+		if clientAccount == "" {
+			clientAccount = "GCHIAK3LLDWJ5N4Z4TH6GHCH2LQX5SUL2WEU42I324CFXGDUWXMNNSDZ"
+		}
+
+		if anchorAuthEndpoint == "" && anchorDomain != "" {
+			toml, tErr := anchor.FetchAnchorTOML(ctx, nil, anchorDomain)
+			if tErr == nil {
+				anchorAuthEndpoint = toml.WebAuthEndpoint
+			}
+		}
+
+		sep10Client := anchor.NewSEP10Client(
+			anchorAuthEndpoint,
+			os.Getenv("ANCHOR_SIGNING_KEY"),
+			clientAccount,
+			keyMgr,
+			nil,
+		)
+		logger.Info("SEP-10 web authentication client initialized with automatic renewal",
+			"auth_endpoint", anchorAuthEndpoint,
+			"client_account", clientAccount,
+		)
+		_ = sep10Client
 	}
 
 	eventChan := make(chan listener.EventPayload, 100)
@@ -175,6 +263,16 @@ func main() {
 					"profile_hash", payload.ProfileHashHex,
 					"trace_id", telemetry.TraceID(processCtx),
 				)
+
+				// Persist atomically to durable transaction outbox
+				outboxEv := store.OutboxEvent{
+					EventID:   payload.EventID,
+					EventType: "disbursed",
+					Payload:   fmt.Sprintf(`{"escrow_id":%d,"amount":"%s","profile_hash":"%s"}`, payload.EscrowID, payload.PayoutAmount.String(), payload.ProfileHashHex),
+				}
+				if err := outboxStore.InsertLedgerEventsAtomic(processCtx, payload.Ledger, []store.OutboxEvent{outboxEv}); err != nil {
+					logger.Debug("Outbox atomic ledger insert notice", "event_id", payload.EventID, "reason", err)
+				}
 
 				// Complete processing after downstream handling
 				if err := relayStore.MarkCompleted(payload.EventID); err != nil {
@@ -249,4 +347,17 @@ func handleMigrateCommand(logger *slog.Logger, args []string) {
 		logger.Error("Unknown migration command", "command", args[0])
 		os.Exit(1)
 	}
+}
+
+func checkHealth(endpoint string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected health status: %d", resp.StatusCode)
+	}
+	return nil
 }

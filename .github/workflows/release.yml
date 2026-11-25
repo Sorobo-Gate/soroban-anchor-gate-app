@@ -1,0 +1,433 @@
+---
+name: Release
+
+# Automated release pipeline (issue #160).
+#
+# On every push to `main` the workflow:
+#   1. derives the next SemVer version from Conventional Commits since the last
+#      stable `v*` tag (BREAKING CHANGE / `!:` -> major, feat -> minor,
+#      fix -> patch);
+#   2. builds the size-optimised Soroban contract WASM (the Cargo release
+#      profile already enables opt-level=z, LTO, codegen-units=1, panic=abort
+#      and strip=symbols, so no extra optimisation pass is needed);
+#   3. writes SHA-256 checksums for the WASM binary and verifies them;
+#   4. generates CHANGELOG.md grouped into Breaking Changes, Features,
+#      Bug Fixes, Performance and Other, and uses it as the release notes;
+#   5. tags the commit and publishes the GitHub Release with the WASM binary,
+#      checksums and changelog attached;
+#   6. publishes @soroban-anchor-gate/contract-client to npm when NPM_TOKEN
+#      is configured.
+#
+# A `workflow_dispatch` run replays the same pipeline against a mock tag
+# (`v0.0.0-mock.N`) as a prerelease, so the workflow itself can be rehearsed
+# from the Actions UI without cutting a real release. Mock and prerelease tags
+# are excluded from version resolution, and `dry_run` stops before
+# tagging/publishing.
+
+on:  # yamllint disable-line rule:truthy
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mock_tag:
+        description: >-
+          Mock release tag to rehearse with
+          (vMAJOR.MINOR.PATCH, e.g. v0.0.0-mock.1)
+        required: false
+        default: ''
+      dry_run:
+        description: >-
+          Build WASM and generate notes only;
+          do not tag, release or publish
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  RUST_WASM_TARGET: wasm32-unknown-unknown
+  CONTRACT_CRATE: soroban_anchor_escrow
+  CONTRACT_PACKAGE: soroban-anchor-escrow
+  SDK_DIR: packages/contract-client
+  RELEASE_DIR: release-assets
+
+jobs:
+  release:
+    name: Build, tag and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      MOCK_TAG_INPUT: ${{ github.event.inputs.mock_tag }}
+      DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
+
+    steps:
+      - name: Check out repository with full history and tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Determine release version from conventional commits
+        id: version
+        run: |
+          set -euo pipefail
+
+          is_semver() {
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+            printf '%s' "${1#v}" | grep -Eq "$pattern"
+          }
+
+          mock_tag="${MOCK_TAG_INPUT:-}"
+          # Stable tags only: prereleases (including mock and hotfix
+          # candidates) are ignored so they never become the base for the
+          # next version.
+          latest_tag="$(git tag --merged HEAD --list 'v[0-9]*' \
+            --sort=-v:refname | grep -Ev -- '-' | head -n 1 || true)"
+          latest_tag="${latest_tag:-}"
+
+          if [ -n "$mock_tag" ]; then
+            if ! is_semver "$mock_tag"; then
+              echo "::error::mock_tag '${mock_tag}' is not a" \
+                "vMAJOR.MINOR.PATCH tag"
+              exit 1
+            fi
+            is_mock=true
+            version="${mock_tag#v}"
+            tag="v${version}"
+            bump="mock"
+            range="HEAD"
+          else
+            is_mock=false
+            if [ -n "$latest_tag" ]; then
+              base="${latest_tag#v}"
+              range="${latest_tag}..HEAD"
+            else
+              # No stable tag yet: continue from the contract crate version.
+              base="$(sed -n \
+                's/^version = "\([0-9][0-9.]*\)"$/\1/p' \
+                contracts/Cargo.toml | head -n 1)"
+              base="${base:-0.1.0}"
+              range="HEAD"
+            fi
+
+            subjects="$(git log --no-merges --pretty=format:%s \
+              "$range" || true)"
+            bodies="$(git log --no-merges --pretty=format:%b \
+              "$range" || true)"
+
+            if printf '%s\n' "$bodies" | grep -qE '^BREAKING[ -]CHANGE:' ||
+               printf '%s\n' "$subjects" |
+                 grep -qE '^[a-zA-Z]+(\([^)]*\))?!:'; then
+              bump="major"
+            elif printf '%s\n' "$subjects" |
+              grep -qE '^feat(\([^)]*\))?:'; then
+              bump="minor"
+            elif printf '%s\n' "$subjects" |
+              grep -qE '^fix(\([^)]*\))?:'; then
+              bump="patch"
+            else
+              bump="none"
+            fi
+
+            if [ "$bump" = "none" ]; then
+              echo "No feat, fix or breaking commits since" \
+                "${latest_tag:-the start of the repository};" \
+                "nothing to release."
+              {
+                echo "skip=true"
+                echo "version="
+                echo "tag="
+                echo "is_mock=false"
+                echo "previous_tag=${latest_tag}"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            IFS=. read -r major minor patch <<<"$base"
+            case "$bump" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+            esac
+            version="${major}.${minor}.${patch}"
+            tag="v${version}"
+          fi
+
+          echo "Resolved ${tag} (${bump} bump), base ${latest_tag:-none}"
+          {
+            echo "skip=false"
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "is_mock=${is_mock}"
+            echo "previous_tag=${latest_tag}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release ${tag}"
+            echo
+            echo "- Previous stable tag: \`${latest_tag:-none}\`"
+            echo "- Version: \`${version}\`"
+            echo "- Bump: \`${bump}\`"
+            echo "- Mock release: \`${is_mock}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Rust toolchain
+        if: steps.version.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry and build output
+        if: steps.version.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build optimised contract WASM
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd contracts
+          cargo build --locked --release --target "$RUST_WASM_TARGET"
+
+          wasm="target/${RUST_WASM_TARGET}/release/${CONTRACT_CRATE}.wasm"
+          if [ ! -s "$wasm" ]; then
+            echo "::error::expected WASM artifact was not produced:" \
+              "${wasm}"
+            exit 1
+          fi
+
+          mkdir -p "../${RELEASE_DIR}"
+          artifact="${CONTRACT_PACKAGE}-v${VERSION}.wasm"
+          cp "$wasm" "../${RELEASE_DIR}/${artifact}"
+          bytes="$(wc -c <"../${RELEASE_DIR}/${artifact}")"
+          echo "Built ${artifact} (${bytes} bytes)"
+
+      - name: Generate SHA-256 checksums
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          cd "$RELEASE_DIR"
+          sha256sum ./*.wasm > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Generate CHANGELOG.md from conventional commits
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          range="${PREVIOUS_TAG:+${PREVIOUS_TAG}..HEAD}"
+          range="${range:-HEAD}"
+          workdir="$(mktemp -d)"
+
+          # Every commit, then the breaking subset (subject `!:` or a
+          # BREAKING CHANGE body), independent of the commit type.
+          git log --no-merges --pretty=format:'%h%x09%s%n' "${range}" \
+            > "${workdir}/all.tsv" || true
+          git log --no-merges --pretty=format:'%h%x09%s%n' \
+            --grep='BREAKING[ -]CHANGE' "${range}" \
+            > "${workdir}/breaking.tsv" || true
+          git log --no-merges --pretty=format:'%h%x09%s%n' \
+            --extended-regexp --grep='^[a-zA-Z]+(\([^)]*\))?!:' \
+            "${range}" >> "${workdir}/breaking.tsv" || true
+          sort -u "${workdir}/breaking.tsv" -o "${workdir}/breaking.tsv"
+
+          # Non-breaking commits are grouped by their conventional type.
+          awk -F'\t' -v dir="${workdir}" '
+            NR == FNR { breaking[$1] = 1; next }
+            ($1 in breaking) { next }
+            {
+              line = "- " $1 " " $2
+              other = "^(docs|refactor|test|build|ci|chore|style|revert)$"
+              type = ""
+              if (match($2, /^[a-z]+/) > 0)
+                type = substr($2, RSTART, RLENGTH)
+              if (type == "feat")
+                print line > (dir "/features.tsv")
+              else if (type == "fix")
+                print line > (dir "/fixes.tsv")
+              else if (type == "perf")
+                print line > (dir "/perf.tsv")
+              else if (type ~ other)
+                print line > (dir "/other.tsv")
+            }
+          ' "${workdir}/breaking.tsv" "${workdir}/all.tsv"
+
+          awk -F'\t' 'NF > 1 { print "- " $1 " " $2 }' \
+            "${workdir}/breaking.tsv" > "${workdir}/breaking.list"
+
+          {
+            echo "# Changelog"
+            echo
+            echo "Notable changes are generated from"
+            echo "[Conventional Commits](https://www.conventionalcommits.org/)."
+            echo
+            echo "## [${VERSION}] - $(date -u +%Y-%m-%d)"
+            echo
+            echo "_Changes since ${PREVIOUS_TAG:-the start of the repo}._"
+            echo
+          } > "${RELEASE_DIR}/CHANGELOG.md"
+
+          emit_section() {
+            if [ -s "$2" ]; then
+              {
+                echo "### $1"
+                echo
+                cat "$2"
+                echo
+              } >> "${RELEASE_DIR}/CHANGELOG.md"
+            fi
+          }
+
+          emit_section "⚠️ Breaking Changes" "${workdir}/breaking.list"
+          emit_section "🚀 Features" "${workdir}/features.tsv"
+          emit_section "🐛 Bug Fixes" "${workdir}/fixes.tsv"
+          emit_section "⚡ Performance Improvements" "${workdir}/perf.tsv"
+          emit_section "🧹 Other Changes" "${workdir}/other.tsv"
+
+          echo "Generated ${RELEASE_DIR}/CHANGELOG.md:"
+          cat "${RELEASE_DIR}/CHANGELOG.md"
+
+      - name: Verify release assets
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          for required in \
+            "${RELEASE_DIR}"/*.wasm \
+            "${RELEASE_DIR}/SHA256SUMS.txt" \
+            "${RELEASE_DIR}/CHANGELOG.md"; do
+            if [ ! -s "$required" ]; then
+              echo "::error::missing or empty release asset: ${required}"
+              exit 1
+            fi
+          done
+          ( cd "$RELEASE_DIR" && sha256sum --check SHA256SUMS.txt )
+          ls -l "$RELEASE_DIR"
+
+      - name: Upload release assets as workflow artifact
+        if: steps.version.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.version.outputs.version }}
+          path: ${{ env.RELEASE_DIR }}/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Show planned release (dry run)
+        if: >-
+          steps.version.outputs.skip != 'true' &&
+          env.DRY_RUN_INPUT == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "Dry run: skipping tag push, GitHub Release and npm publish."
+          echo "Would create release ${TAG} with:"
+          ls -l "$RELEASE_DIR"
+
+      - name: Tag commit and publish GitHub Release
+        if: >-
+          steps.version.outputs.skip != 'true' &&
+          env.DRY_RUN_INPUT != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          IS_MOCK: ${{ steps.version.outputs.is_mock }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists; reusing it."
+          else
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+          assets=(
+            "${RELEASE_DIR}"/*.wasm
+            "${RELEASE_DIR}/SHA256SUMS.txt"
+            "${RELEASE_DIR}/CHANGELOG.md"
+          )
+          extra=()
+          if [ "${IS_MOCK}" = "true" ]; then
+            extra+=(--prerelease --latest=false)
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; updating its assets."
+            gh release upload "${TAG}" "${assets[@]}" --clobber
+          else
+            gh release create "${TAG}" "${assets[@]}" \
+              --title "${TAG}" \
+              --notes-file "${RELEASE_DIR}/CHANGELOG.md" \
+              "${extra[@]}"
+          fi
+
+          echo "Published release ${TAG}"
+          template='{{.tagName}} prerelease={{.isPrerelease}}'
+          gh release view "${TAG}" --json tagName,url,isPrerelease,assets \
+            --template "${template}" || true
+
+      - name: Set up Node.js for npm publishing
+        if: >-
+          steps.version.outputs.skip != 'true' &&
+          steps.version.outputs.is_mock != 'true' &&
+          env.DRY_RUN_INPUT != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache-dependency-path: packages/contract-client/package-lock.json
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish contract client to npm
+        if: >-
+          steps.version.outputs.skip != 'true' &&
+          steps.version.outputs.is_mock != 'true' &&
+          env.DRY_RUN_INPUT != 'true' &&
+          env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd "$SDK_DIR"
+          npm ci
+          npm run build
+          npm version "${VERSION}" --no-git-tag-version --allow-same-version
+          npm publish --access public
+
+      - name: Summarise release outcome
+        if: steps.version.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Release assets"
+            echo
+            echo "| Asset | SHA-256 |"
+            echo "| --- | --- |"
+            while read -r digest name; do
+              echo "| \`${name#./}\` | \`${digest}\` |"
+            done < "${RELEASE_DIR}/SHA256SUMS.txt"
+          } >> "$GITHUB_STEP_SUMMARY"

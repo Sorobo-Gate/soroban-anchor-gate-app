@@ -22,6 +22,8 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { createHash } from "crypto";
+import { createEscrowEventIterator } from "./events";
+import type { EscrowEvent, WatchEscrowOptions } from "./events";
 import { validateNetworkConfig, validateRpcUrl } from "./config";
 import type { NetworkName } from "./config";
 
@@ -341,6 +343,39 @@ export class EscrowGateClient {
   }
 
   /**
+   * Watches lifecycle events for one escrow as an asynchronous iterator.
+   *
+   * The stream begins at the RPC's latest closed ledger and yields later
+   * events in ledger order. It polls every four seconds by default, retries
+   * transient RPC failures with bounded exponential backoff, and deduplicates
+   * overlapping pages using ledger, transaction, operation, and event IDs.
+   * Call the iterator's `return()` method (or break from `for await`) to stop
+   * polling and clear its timer.
+   *
+   * @param escrowId - Positive escrow identifier stored by the contract as a
+   *   `u64`; escrow IDs begin at `1n`.
+   * @param options - Optional polling, timeout, and RPC transport settings.
+   * @returns An independent asynchronous iterator of decoded escrow events.
+   * @throws {RangeError} If `escrowId` is not a positive `u64` bigint or a
+   *   supplied polling option is invalid.
+   *
+   * @example
+   * ```ts
+   * const events = client.watchEscrow(42n);
+   * for await (const event of events) {
+   *   console.log(event.type, event.metadata.txHash);
+   *   if (event.type === "disbursed") break;
+   * }
+   * ```
+   */
+  public watchEscrow(
+    escrowId: bigint,
+    options: WatchEscrowOptions = {}
+  ): AsyncIterableIterator<EscrowEvent> {
+    return createEscrowEventIterator(escrowId, this.config, options);
+  }
+
+  /**
    * Creates an unsigned transaction builder using this client's configured
    * network passphrase. The caller remains responsible for adding operations,
    * applying a timeout, signing, and submitting through their chosen flow.
@@ -640,6 +675,15 @@ export class EscrowGateClient {
 }
 
 export * from "./crypto";
+export { EscrowEventStreamError } from "./events";
+export type {
+  EscrowEvent,
+  EscrowEventBase,
+  EscrowEventMetadata,
+  EscrowEventRpcServer,
+  EscrowEventStreamErrorKind,
+  WatchEscrowOptions,
+} from "./events";
 export {
   createClientConfig,
   createNetworkConfig,

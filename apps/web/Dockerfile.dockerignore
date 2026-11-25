@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+apps/web/node_modules
+apps/web/.next
+apps/web/out
+apps/web/e2e
+apps/web/playwright-report
+apps/web/test-results
+packages/contract-client/node_modules
+packages/contract-client/dist
+contracts/
+services/
+docs/
+evidence/
+*.md

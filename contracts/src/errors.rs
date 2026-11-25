@@ -32,4 +32,11 @@ pub enum EscrowError {
     // Rate-limiting volume governor (Issue 57)
     HourlyVolumeLimitExceeded = 25,
     InvalidVolumeLimit = 26,
+    // Cross-contract reentrancy lock (Issue 67)
+    ReentrancyDetected = 27,
+    // Cryptographic hashlock HTLC release (Issue 65)
+    InvalidPreimage = 28,
+    HashlockNotSet = 29,
+    // Secondary beneficiary fallback routing (Issue 64)
+    SecondaryBeneficiaryNotFound = 30,
 }

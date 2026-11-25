@@ -28,12 +28,17 @@ export interface EscrowWizardProps {
   onSubmit: (state: WizardState) => Promise<void>;
   busy: boolean;
   statusMessage: string | null;
+  /** Inline balance alert from `useTokenBalance` (e.g. insufficient funds). */
+  balanceAlert?: string | null;
+  /** Pass `canSubmit` from `useTokenBalance`; false blocks submission. */
+  balanceOk?: boolean;
 }
 
 const labelCls = "text-xs font-semibold text-muted-foreground uppercase tracking-wider";
 
 export function EscrowWizard(props: EscrowWizardProps) {
   const { walletAddress, tokens, fetchBalance, simulate, onSubmit, busy, statusMessage } = props;
+  const { balanceAlert, balanceOk = true } = props;
   const [state, dispatch] = useReducer(wizardReducer, tokens[0]?.address ?? "", initialWizardState);
   const [touched, setTouched] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -92,16 +97,17 @@ export function EscrowWizard(props: EscrowWizardProps) {
       </ol>
 
       {state.step === 0 && (
-        <section className="space-y-4">
+        <section className="space-y-4" aria-label={`Step 1: ${WIZARD_STEPS[0]}`}>
           <div className="space-y-2">
-            <span className={labelCls}>Token</span>
-            <div className="flex flex-wrap gap-2">
+            <span id="wiz-token-label" className={labelCls}>Token</span>
+            <div role="group" aria-labelledby="wiz-token-label" className="flex flex-wrap gap-2">
               {tokens.map((t) => (
                 <button
                   key={t.address}
                   type="button"
+                  aria-pressed={state.token === t.address}
                   onClick={() => dispatch({ type: "set", field: "token", value: t.address })}
-                  className={`flex-1 min-w-32 py-2 px-3 rounded-xl border text-xs font-medium ${
+                  className={`flex-1 min-w-32 py-2 px-3 rounded-xl border text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                     state.token === t.address ? "bg-primary/15 border-primary text-primary" : "border-border"
                   }`}
                 >
@@ -109,12 +115,12 @@ export function EscrowWizard(props: EscrowWizardProps) {
                 </button>
               ))}
             </div>
-            <Input className="font-mono text-xs" value={state.token} onChange={set("token")} aria-label="Token contract" />
+            <Input className="font-mono text-xs" value={state.token} onChange={set("token")} aria-label="Token contract" aria-invalid={Boolean(error)} />
           </div>
           <div className="space-y-2">
             <label className={labelCls} htmlFor="wiz-amount">Amount</label>
-            <Input id="wiz-amount" type="number" step="0.0000001" value={state.amount} onChange={set("amount")} />
-            <p className="text-xs text-muted-foreground">
+            <Input id="wiz-amount" type="number" step="0.0000001" value={state.amount} onChange={set("amount")} aria-describedby="wiz-balance-hint" aria-invalid={Boolean(error)} />
+            <p id="wiz-balance-hint" className="text-xs text-muted-foreground">
               {state.balance === null
                 ? walletAddress ? "Balance unavailable" : "Connect wallet to check balance"
                 : `Available: ${Number(state.balance) / 1e7} tokens`}
@@ -124,15 +130,15 @@ export function EscrowWizard(props: EscrowWizardProps) {
       )}
 
       {state.step === 1 && (
-        <section className="space-y-4">
+        <section className="space-y-4" aria-label={`Step 2: ${WIZARD_STEPS[1]}`}>
           <div className="space-y-2">
             <label className={labelCls} htmlFor="wiz-ben">Target anchor / recipient address</label>
-            <Input id="wiz-ben" className="font-mono" placeholder="G..." value={state.beneficiary} onChange={set("beneficiary")} />
+            <Input id="wiz-ben" className="font-mono" placeholder="G..." value={state.beneficiary} onChange={set("beneficiary")} aria-invalid={Boolean(error)} />
           </div>
           <div className="space-y-2">
             <label className={labelCls} htmlFor="wiz-bank">Recipient bank IBAN / routing details</label>
-            <Input id="wiz-bank" placeholder="IBAN: DE89370400440532013000" value={state.routingInfo} onChange={set("routingInfo")} />
-            <p className="text-xs text-muted-foreground">
+            <Input id="wiz-bank" placeholder="IBAN: DE89370400440532013000" value={state.routingInfo} onChange={set("routingInfo")} aria-describedby="wiz-bank-hint" aria-invalid={Boolean(error)} />
+            <p id="wiz-bank-hint" className="text-xs text-muted-foreground">
               Only a SHA-256 <code className="font-mono">profile_hash</code> is stored onchain; raw details never leave your browser.
             </p>
           </div>
@@ -140,10 +146,10 @@ export function EscrowWizard(props: EscrowWizardProps) {
       )}
 
       {state.step === 2 && (
-        <section className="space-y-4">
+        <section className="space-y-4" aria-label={`Step 3: ${WIZARD_STEPS[2]}`}>
           <div className="space-y-2">
             <label className={labelCls} htmlFor="wiz-days">Timeout (days)</label>
-            <Input id="wiz-days" type="number" value={state.lockDurationDays} onChange={set("lockDurationDays")} />
+            <Input id="wiz-days" type="number" value={state.lockDurationDays} onChange={set("lockDurationDays")} aria-invalid={Boolean(error)} />
           </div>
           <div className="space-y-1">
             <span className={labelCls}>Dispute arbiter</span>
@@ -154,7 +160,7 @@ export function EscrowWizard(props: EscrowWizardProps) {
       )}
 
       {state.step === LAST_STEP && (
-        <section className="space-y-4">
+        <section className="space-y-4" aria-label={`Step 4: ${WIZARD_STEPS[LAST_STEP]}`}>
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
             {[
               ["Token", state.token],
@@ -176,6 +182,7 @@ export function EscrowWizard(props: EscrowWizardProps) {
       )}
 
       {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
+      {balanceAlert && !error && <p role="alert" className="text-sm text-red-500">{balanceAlert}</p>}
       {statusMessage && <p role="status" className="text-xs text-muted-foreground">{statusMessage}</p>}
 
       <div className="flex flex-col-reverse sm:flex-row justify-between gap-3">
@@ -185,7 +192,11 @@ export function EscrowWizard(props: EscrowWizardProps) {
         {state.step < LAST_STEP ? (
           <Button type="button" onClick={next}>Next</Button>
         ) : (
-          <Button type="button" onClick={() => onSubmit(state)} disabled={busy || !walletAddress}>
+          <Button
+            type="button"
+            onClick={() => onSubmit(state)}
+            disabled={busy || !walletAddress || !balanceOk}
+          >
             {walletAddress ? "Sign with Freighter" : "Connect wallet to sign"}
           </Button>
         )}

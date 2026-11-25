@@ -9,10 +9,11 @@ mod test;
 use crate::errors::EscrowError;
 use crate::types::{
     DataKey, DisbursementCommitment, EscrowEntry, EscrowInitParams, EscrowRecord, EscrowStatus,
-    EscrowStream, EscrowTerms, VolumeTracker, WhitelistProposal,
+    EscrowStream, EscrowTerms, SettlementProposal, VolumeTracker, WhitelistProposal,
 };
 use soroban_sdk::{
-    contract, contractclient, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec,
+    contract, contractclient, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env,
+    Symbol, Vec,
 };
 
 const BPS_DIVISOR: i128 = 10_000;
@@ -20,6 +21,31 @@ const PERSISTENT_EXTEND_TTL_THRESHOLD: u32 = 100_000;
 const PERSISTENT_EXTEND_TTL_AMOUNT: u32 = 200_000;
 const INSTANCE_EXTEND_TTL_THRESHOLD: u32 = 100_000;
 const INSTANCE_EXTEND_TTL_AMOUNT: u32 = 200_000;
+
+/// Reentrancy guard backed by contract transient (temporary) storage (Issue 67).
+struct ReentrancyGuard<'a> {
+    env: &'a Env,
+}
+
+impl<'a> ReentrancyGuard<'a> {
+    fn enter(env: &'a Env) -> Result<Self, EscrowError> {
+        let key = DataKey::ReentrancyLock;
+        if env.storage().temporary().has(&key) {
+            return Err(EscrowError::ReentrancyDetected);
+        }
+        env.storage().temporary().set(&key, &true);
+        Ok(ReentrancyGuard { env })
+    }
+}
+
+impl<'a> Drop for ReentrancyGuard<'a> {
+    fn drop(&mut self) {
+        self.env
+            .storage()
+            .temporary()
+            .remove(&DataKey::ReentrancyLock);
+    }
+}
 
 /// Rolling 1-hour window duration in seconds (3600s).
 pub const ROLLING_WINDOW_SECONDS: u64 = 3600;
@@ -158,6 +184,7 @@ impl EscrowGate {
         profile_hash: BytesN<32>,
         lock_duration: u64,
     ) -> Result<u64, EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -255,6 +282,8 @@ impl EscrowGate {
                 cancellation_penalty_bps: 0,
                 referrer: None,
                 committed_rate: None,
+                hashlock: None,
+                secondary_beneficiary: None,
             },
         );
         env.storage().persistent().extend_ttl(
@@ -337,16 +366,40 @@ impl EscrowGate {
         terms.cancellation_penalty_bps = params.cancellation_penalty_bps;
         terms.referrer = params.referrer;
         terms.committed_rate = params.committed_rate;
+        terms.hashlock = params.hashlock.clone();
+        terms.secondary_beneficiary = params.secondary_beneficiary.clone();
         env.storage().persistent().set(&key, &terms);
         env.storage().persistent().extend_ttl(
             &key,
             PERSISTENT_EXTEND_TTL_THRESHOLD,
             PERSISTENT_EXTEND_TTL_AMOUNT,
         );
+
+        if let Some(hashlock) = params.hashlock {
+            let h_key = DataKey::Hashlock(escrow_id);
+            env.storage().persistent().set(&h_key, &hashlock);
+            env.storage().persistent().extend_ttl(
+                &h_key,
+                PERSISTENT_EXTEND_TTL_THRESHOLD,
+                PERSISTENT_EXTEND_TTL_AMOUNT,
+            );
+        }
+
+        if let Some(secondary) = params.secondary_beneficiary {
+            let s_key = DataKey::SecondaryBeneficiary(escrow_id);
+            env.storage().persistent().set(&s_key, &secondary);
+            env.storage().persistent().extend_ttl(
+                &s_key,
+                PERSISTENT_EXTEND_TTL_THRESHOLD,
+                PERSISTENT_EXTEND_TTL_AMOUNT,
+            );
+        }
+
         Ok(escrow_id)
     }
 
     pub fn cancel_escrow(env: Env, escrow_id: u64, payer: Address) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         let key = DataKey::Escrow(escrow_id);
         let mut record: EscrowRecord = env
             .storage()
@@ -374,6 +427,8 @@ impl EscrowGate {
                 cancellation_penalty_bps: 0,
                 referrer: None,
                 committed_rate: None,
+                hashlock: None,
+                secondary_beneficiary: None,
             });
         let duration = record
             .unlock_timestamp
@@ -429,6 +484,7 @@ impl EscrowGate {
         rate_per_second: i128,
         duration: u64,
     ) -> Result<u64, EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -524,6 +580,7 @@ impl EscrowGate {
     }
 
     pub fn stream_withdraw(env: Env, stream_id: u64) -> Result<i128, EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         let key = DataKey::Stream(stream_id);
         let mut stream: EscrowStream = env
             .storage()
@@ -560,6 +617,7 @@ impl EscrowGate {
     }
 
     pub fn terminate_stream(env: Env, stream_id: u64, payer: Address) -> Result<i128, EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         let key = DataKey::Stream(stream_id);
         let mut stream: EscrowStream = env
             .storage()
@@ -607,6 +665,7 @@ impl EscrowGate {
         caller: Address,
         anchor_disbursement_address: Address,
     ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -725,6 +784,7 @@ impl EscrowGate {
         caller: Address,
         commitments: Vec<DisbursementCommitment>,
     ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -874,6 +934,7 @@ impl EscrowGate {
     /// If caller != payer, allocates keeper bounty (bps) to the caller and remainder to payer.
     /// If caller == payer, returns the entire refundable amount to payer.
     pub fn claim_refund(env: Env, escrow_id: u64, caller: Address) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -1515,6 +1576,7 @@ impl EscrowGate {
         payer_bps: u32,
         beneficiary_bps: u32,
     ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -1593,6 +1655,388 @@ impl EscrowGate {
         );
 
         Ok(())
+    }
+
+    // --- Cryptographic Hashlock HTLC Conditional Release (Issue 65) ---
+
+    pub fn set_hashlock(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        hashlock: BytesN<32>,
+    ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+        caller.require_auth();
+
+        let key = DataKey::Escrow(escrow_id);
+        let record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if caller != record.payer && !Self::check_is_admin(&env, &caller) {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let h_key = DataKey::Hashlock(escrow_id);
+        env.storage().persistent().set(&h_key, &hashlock);
+        env.storage().persistent().extend_ttl(
+            &h_key,
+            PERSISTENT_EXTEND_TTL_THRESHOLD,
+            PERSISTENT_EXTEND_TTL_AMOUNT,
+        );
+
+        let terms_key = DataKey::EscrowTerms(escrow_id);
+        if let Some(mut terms) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, EscrowTerms>(&terms_key)
+        {
+            terms.hashlock = Some(hashlock.clone());
+            env.storage().persistent().set(&terms_key, &terms);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "hashlock_set"), escrow_id),
+            (caller, hashlock),
+        );
+        Ok(())
+    }
+
+    pub fn get_hashlock(env: Env, escrow_id: u64) -> Result<BytesN<32>, EscrowError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Hashlock(escrow_id))
+            .ok_or(EscrowError::HashlockNotSet)
+    }
+
+    pub fn release_with_preimage(
+        env: Env,
+        escrow_id: u64,
+        preimage: Bytes,
+    ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+
+        let key = DataKey::Escrow(escrow_id);
+        let mut record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        if env.ledger().timestamp() >= record.unlock_timestamp {
+            return Err(EscrowError::UnlockTimePassed);
+        }
+
+        let hashlock = env
+            .storage()
+            .persistent()
+            .get::<DataKey, BytesN<32>>(&DataKey::Hashlock(escrow_id))
+            .ok_or(EscrowError::HashlockNotSet)?;
+
+        let computed_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
+        if computed_hash != hashlock {
+            return Err(EscrowError::InvalidPreimage);
+        }
+
+        if !Self::is_rate_within_limit(&env, escrow_id, &record)? {
+            record.status = EscrowStatus::Disputed;
+            env.storage().persistent().set(&key, &record);
+            env.storage()
+                .persistent()
+                .set(&DataKey::RateDispute(escrow_id), &true);
+            env.events().publish(
+                (Symbol::new(&env, "rate_dispute"), escrow_id),
+                record.profile_hash,
+            );
+            return Ok(());
+        }
+
+        let token_client = token::Client::new(&env, &record.token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        let mut distributable_amount = record.amount;
+        if contract_balance < record.amount {
+            let deficit = record.amount - contract_balance;
+            distributable_amount = contract_balance;
+            env.events().publish(
+                (Symbol::new(&env, "ClawbackHandled"), record.token.clone()),
+                (escrow_id, deficit),
+            );
+        }
+
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
+        let treasury: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Treasury)
+            .ok_or(EscrowError::NotInitialized)?;
+
+        let fee_amount = distributable_amount
+            .checked_mul(fee_bps as i128)
+            .ok_or(EscrowError::ArithmeticOverflow)?
+            / BPS_DIVISOR;
+        let terms: Option<EscrowTerms> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowTerms(escrow_id));
+        let referral_fee = if terms
+            .as_ref()
+            .and_then(|terms| terms.referrer.as_ref())
+            .is_some()
+        {
+            fee_amount
+                .checked_mul(20)
+                .ok_or(EscrowError::ArithmeticOverflow)?
+                / 100
+        } else {
+            0
+        };
+        let treasury_fee = fee_amount
+            .checked_sub(referral_fee)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        let payout_amount = distributable_amount
+            .checked_sub(fee_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+
+        if treasury_fee > 0 {
+            token_client.transfer(&env.current_contract_address(), &treasury, &treasury_fee);
+        }
+        if referral_fee > 0 {
+            if let Some(referrer) = terms.and_then(|terms| terms.referrer) {
+                token_client.transfer(&env.current_contract_address(), &referrer, &referral_fee);
+            }
+        }
+
+        if payout_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &record.beneficiary,
+                &payout_amount,
+            );
+        }
+
+        record.status = EscrowStatus::Disbursed;
+        env.storage().persistent().set(&key, &record);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_EXTEND_TTL_THRESHOLD,
+            PERSISTENT_EXTEND_TTL_AMOUNT,
+        );
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events().publish(
+            (Symbol::new(&env, "preimage_released"), escrow_id),
+            (record.beneficiary, payout_amount),
+        );
+
+        Ok(())
+    }
+
+    // --- Secondary Beneficiary Fallback Routing (Issue 64) ---
+
+    pub fn set_secondary_beneficiary(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+        secondary_beneficiary: Address,
+    ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+        caller.require_auth();
+
+        let key = DataKey::Escrow(escrow_id);
+        let record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if caller != record.payer && !Self::check_is_admin(&env, &caller) {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let sec_key = DataKey::SecondaryBeneficiary(escrow_id);
+        env.storage()
+            .persistent()
+            .set(&sec_key, &secondary_beneficiary);
+        env.storage().persistent().extend_ttl(
+            &sec_key,
+            PERSISTENT_EXTEND_TTL_THRESHOLD,
+            PERSISTENT_EXTEND_TTL_AMOUNT,
+        );
+
+        let terms_key = DataKey::EscrowTerms(escrow_id);
+        if let Some(mut terms) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, EscrowTerms>(&terms_key)
+        {
+            terms.secondary_beneficiary = Some(secondary_beneficiary.clone());
+            env.storage().persistent().set(&terms_key, &terms);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "secondary_beneficiary_set"), escrow_id),
+            (caller, secondary_beneficiary),
+        );
+        Ok(())
+    }
+
+    pub fn get_secondary_beneficiary(env: Env, escrow_id: u64) -> Result<Address, EscrowError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SecondaryBeneficiary(escrow_id))
+            .ok_or(EscrowError::SecondaryBeneficiaryNotFound)
+    }
+
+    pub fn redirect_disbursement(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+    ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(EscrowError::NotInitialized);
+        }
+        caller.require_auth();
+
+        let key = DataKey::Escrow(escrow_id);
+        let mut record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::EscrowNotFound)?;
+
+        if caller != record.payer && !Self::check_is_admin(&env, &caller) {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        if record.status != EscrowStatus::Funded {
+            return Err(EscrowError::InvalidStatus);
+        }
+
+        let fallback: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SecondaryBeneficiary(escrow_id))
+            .ok_or(EscrowError::SecondaryBeneficiaryNotFound)?;
+
+        if !Self::is_rate_within_limit(&env, escrow_id, &record)? {
+            record.status = EscrowStatus::Disputed;
+            env.storage().persistent().set(&key, &record);
+            env.storage()
+                .persistent()
+                .set(&DataKey::RateDispute(escrow_id), &true);
+            env.events().publish(
+                (Symbol::new(&env, "rate_dispute"), escrow_id),
+                record.profile_hash,
+            );
+            return Ok(());
+        }
+
+        let token_client = token::Client::new(&env, &record.token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        let mut distributable_amount = record.amount;
+        if contract_balance < record.amount {
+            let deficit = record.amount - contract_balance;
+            distributable_amount = contract_balance;
+            env.events().publish(
+                (Symbol::new(&env, "ClawbackHandled"), record.token.clone()),
+                (escrow_id, deficit),
+            );
+        }
+
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
+        let treasury: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Treasury)
+            .ok_or(EscrowError::NotInitialized)?;
+
+        let fee_amount = distributable_amount
+            .checked_mul(fee_bps as i128)
+            .ok_or(EscrowError::ArithmeticOverflow)?
+            / BPS_DIVISOR;
+        let terms: Option<EscrowTerms> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowTerms(escrow_id));
+        let referral_fee = if terms
+            .as_ref()
+            .and_then(|terms| terms.referrer.as_ref())
+            .is_some()
+        {
+            fee_amount
+                .checked_mul(20)
+                .ok_or(EscrowError::ArithmeticOverflow)?
+                / 100
+        } else {
+            0
+        };
+        let treasury_fee = fee_amount
+            .checked_sub(referral_fee)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+        let payout_amount = distributable_amount
+            .checked_sub(fee_amount)
+            .ok_or(EscrowError::ArithmeticOverflow)?;
+
+        if treasury_fee > 0 {
+            token_client.transfer(&env.current_contract_address(), &treasury, &treasury_fee);
+        }
+        if referral_fee > 0 {
+            if let Some(referrer) = terms.and_then(|terms| terms.referrer) {
+                token_client.transfer(&env.current_contract_address(), &referrer, &referral_fee);
+            }
+        }
+
+        if payout_amount > 0 {
+            token_client.transfer(&env.current_contract_address(), &fallback, &payout_amount);
+        }
+
+        record.status = EscrowStatus::Disbursed;
+        env.storage().persistent().set(&key, &record);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_EXTEND_TTL_THRESHOLD,
+            PERSISTENT_EXTEND_TTL_AMOUNT,
+        );
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
+        env.events().publish(
+            (Symbol::new(&env, "fallback_disbursed"), escrow_id),
+            (fallback, payout_amount),
+        );
+
+        Ok(())
+    }
+
+    pub fn release_fallback(env: Env, escrow_id: u64, caller: Address) -> Result<(), EscrowError> {
+        Self::redirect_disbursement(env, escrow_id, caller)
     }
 
     pub fn get_escrow(env: Env, escrow_id: u64) -> Result<EscrowRecord, EscrowError> {

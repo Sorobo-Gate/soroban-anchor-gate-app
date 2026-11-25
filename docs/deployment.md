@@ -248,3 +248,107 @@ unsafe with the file store: the overlap itself creates two pollers.
   during ledger bursts.
 - **Never hand-edit `processed_events` rows** to force a retry without knowing
   which replica owns the row; the state machine is the payout audit trail.
+
+---
+
+## 4. Multi-Architecture Container Builds (`linux/amd64` & `linux/arm64`)
+
+Both `apps/web/Dockerfile` and `services/relay/Dockerfile` are configured for deterministic multi-architecture builds targeting **Apple Silicon (`linux/arm64`)** and **Linux servers (`linux/amd64`)**, with non-root runtime users, native health checks, and minimized final image footprints:
+
+- **`apps/web/Dockerfile`**:
+  - Uses BuildKit syntax (`docker/dockerfile:1.7`), `npm ci --ignore-scripts` with BuildKit npm cache mounts, and Next.js `output: "standalone"` (`apps/web/next.config.ts`) so devDependencies (`playwright`, `eslint`, `typescript`, `axe-core`, etc.) are omitted from the production `runner` image.
+  - Runs as non-root user `nextjs` (UID `1001`) with a built-in Node `fetch` `HEALTHCHECK`.
+  - Excludes non-web paths via `apps/web/Dockerfile.dockerignore`.
+- **`services/relay/Dockerfile`**:
+  - Uses `FROM --platform=$BUILDPLATFORM golang:1.22-alpine` with `ARG TARGETOS` / `ARG TARGETARCH` and `CGO_ENABLED=0` for fast native cross-compilation to both `linux/amd64` and `linux/arm64`.
+  - Uses `gcr.io/distroless/static-debian12:nonroot` (`USER nonroot:nonroot`, UID `65532`) for minimal runtime image size (~15 MB) and zero shell/package-manager attack surface.
+  - Includes a built-in `relay healthcheck` CLI subcommand (`services/relay/cmd/relay/main.go`) for distroless `HEALTHCHECK` verification.
+  - Excludes non-relay paths via `services/relay/Dockerfile.dockerignore`.
+
+### Local Multi-Arch Build & Verification
+
+```bash
+# Ensure Buildx builder with QEMU multi-arch emulation is active
+docker buildx create --use --name soroban-multiarch || docker buildx use soroban-multiarch
+
+# Build both services for linux/amd64 and linux/arm64
+docker buildx build --platform linux/amd64,linux/arm64 -f apps/web/Dockerfile .
+docker buildx build --platform linux/amd64,linux/arm64 -f services/relay/Dockerfile .
+
+# Verify container startup & healthcheck on each architecture (single-arch load)
+docker buildx build --platform linux/amd64 --load -t soroban-relay:amd64 -f services/relay/Dockerfile .
+docker run --rm -d -p 8080:8080 --name relay-amd64 soroban-relay:amd64
+curl -sf http://127.0.0.1:8080/health && docker stop relay-amd64
+```
+
+### Reference CI Workflow (`.github/workflows/docker.yml`)
+
+> **Note:** Repository policy (`scripts/ci/issue_compliance.js`) restricts `.github/workflows/` modifications to maintainers. Maintainers can enable the multi-architecture Buildx workflow below directly in `.github/workflows/docker.yml`:
+
+```yaml
+name: Multi-Arch Docker Builds
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  docker-multiarch:
+    name: Build & Verify (${{ matrix.service }} / ${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: web
+            dockerfile: apps/web/Dockerfile
+            platform: linux/amd64
+            port: "3000"
+            health_path: /
+          - service: web
+            dockerfile: apps/web/Dockerfile
+            platform: linux/arm64
+            port: "3000"
+            health_path: /
+          - service: relay
+            dockerfile: services/relay/Dockerfile
+            platform: linux/amd64
+            port: "8080"
+            health_path: /health
+          - service: relay
+            dockerfile: services/relay/Dockerfile
+            platform: linux/arm64
+            port: "8080"
+            health_path: /health
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (${{ matrix.service }} - ${{ matrix.platform }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: soroban-${{ matrix.service }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify image footprint & container startup
+        run: |
+          docker image inspect soroban-${{ matrix.service }}:ci --format '{{.Architecture}} {{.Size}}'
+          cid=$(docker run -d -p ${{ matrix.port }}:${{ matrix.port }} soroban-${{ matrix.service }}:ci)
+          trap 'docker rm -f "$cid"' EXIT
+          for i in $(seq 1 15); do
+            if curl -sf "http://127.0.0.1:${{ matrix.port }}${{ matrix.health_path }}" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs "$cid"
+          exit 1
+```
+
