@@ -1,0 +1,266 @@
+name: Gas Budget Regression Testing
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: gas-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gas-regression-test:
+    name: Gas Budget Regression Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run Contract Gas Profiling Benchmarks
+        id: profile
+        run: |
+          cd contracts
+          cargo test gas_benchmark -- --nocapture --test-threads=1 | tee ../gas_benchmark_output.txt
+
+      - name: Compare Gas Metrics and Check Regression
+        id: compare
+        env:
+          HAS_GAS_APPROVAL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'gas-increase-approved') }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          python3 - << 'EOF'
+          import os
+          import sys
+          import json
+
+          def norm_payload(p):
+              return p.strip().replace('—', '-').replace('–', '-')
+
+          def parse_gas_tables(text):
+              data = {}
+              in_table = False
+              for line in text.splitlines():
+                  line_s = line.strip()
+                  if 'Entrypoint' in line_s and 'Payload' in line_s and 'CPU Instructions' in line_s:
+                      in_table = True
+                      continue
+                  if in_table:
+                      if not line_s.startswith('|'):
+                          in_table = False
+                          continue
+                      if ':---' in line_s or '---:' in line_s:
+                          continue
+                      parts = [p.strip() for p in line_s.split('|')[1:-1]]
+                      if len(parts) >= 4:
+                          ep = parts[0].strip('`').strip()
+                          payload = norm_payload(parts[1])
+                          try:
+                              cpu = int(parts[2].replace(',', ''))
+                              mem = int(parts[3].replace(',', ''))
+                              data[(ep, payload)] = {'cpu': cpu, 'mem': mem, 'raw_payload': parts[1]}
+                          except ValueError:
+                              continue
+              return data
+
+          # 1. Parse baseline from docs/gas-benchmarks.md
+          baseline_path = 'docs/gas-benchmarks.md'
+          if not os.path.exists(baseline_path):
+              print(f"Error: Baseline file '{baseline_path}' not found!", file=sys.stderr)
+              sys.exit(1)
+
+          with open(baseline_path, 'r', encoding='utf-8') as f:
+              baselines = parse_gas_tables(f.read())
+
+          print(f"Loaded {len(baselines)} baseline entries from {baseline_path}.")
+
+          # 2. Parse measured metrics from test run
+          output_path = 'gas_benchmark_output.txt'
+          if not os.path.exists(output_path):
+              print(f"Error: Test output file '{output_path}' not found!", file=sys.stderr)
+              sys.exit(1)
+
+          with open(output_path, 'r', encoding='utf-8') as f:
+              measured = parse_gas_tables(f.read())
+
+          print(f"Captured {len(measured)} measured entrypoint metrics from test output.")
+
+          # 3. Check for approval label
+          has_approval = os.environ.get('HAS_GAS_APPROVAL_LABEL', 'false').lower() == 'true'
+          if not has_approval:
+              try:
+                  labels_data = json.loads(os.environ.get('PR_LABELS', '[]'))
+                  for l in labels_data:
+                      name = l.get('name', '') if isinstance(l, dict) else str(l)
+                      if name.lower() == 'gas-increase-approved':
+                          has_approval = True
+                          break
+              except Exception:
+                  pass
+
+          # 4. Compare measured metrics against baselines
+          regressions = []
+          report_rows = []
+
+          for key, meas in measured.items():
+              ep, payload = key
+              raw_payload = meas['raw_payload']
+              base = baselines.get(key)
+
+              if base is not None:
+                  base_cpu = base['cpu']
+                  base_mem = base['mem']
+                  meas_cpu = meas['cpu']
+                  meas_mem = meas['mem']
+
+                  cpu_delta = meas_cpu - base_cpu
+                  cpu_pct = (cpu_delta / base_cpu) * 100.0 if base_cpu else 0.0
+                  mem_delta = meas_mem - base_mem
+                  mem_pct = (mem_delta / base_mem) * 100.0 if base_mem else 0.0
+
+                  # Fail CI if gas consumption increases by >10%
+                  is_regressed = (cpu_pct > 10.0) or (mem_pct > 10.0)
+                  if is_regressed:
+                      regressions.append({
+                          'entrypoint': ep,
+                          'payload': raw_payload,
+                          'cpu_base': base_cpu,
+                          'cpu_meas': meas_cpu,
+                          'cpu_pct': cpu_pct,
+                          'mem_base': base_mem,
+                          'mem_meas': meas_mem,
+                          'mem_pct': mem_pct
+                      })
+                      status = "⚠️ Regressed (>10%)"
+                  elif cpu_pct < -0.1 or mem_pct < -0.1:
+                      status = "🟢 Improved"
+                  else:
+                      status = "✅ Stable"
+
+                  report_rows.append(
+                      f"| `{ep}` | {raw_payload} | {base_cpu:,} | {meas_cpu:,} | {cpu_pct:+.1f}% | "
+                      f"{base_mem:,} | {meas_mem:,} | {mem_pct:+.1f}% | {status} |"
+                  )
+              else:
+                  report_rows.append(
+                      f"| `{ep}` | {raw_payload} | — | {meas['cpu']:,} | NEW | "
+                      f"— | {meas['mem']:,} | NEW | ℹ️ Untracked |"
+                  )
+
+          # 5. Build Markdown Summary Report
+          lines = []
+          lines.append("## ⛽ Soroban Gas Budget Regression Report\n")
+
+          if regressions:
+              if has_approval:
+                  lines.append(
+                      f"> ⚠️ **Notice**: Detected **{len(regressions)}** entrypoint(s) with gas consumption "
+                      f"increases exceeding the 10% regression threshold. "
+                      f"**Bypassed via approved justification label: `gas-increase-approved`.**\n"
+                  )
+              else:
+                  lines.append(
+                      f"> 🚨 **Regression Alert**: Detected **{len(regressions)}** entrypoint(s) with gas "
+                      f"consumption increases exceeding the **10% threshold** without an approved "
+                      f"`gas-increase-approved` label.\n"
+                  )
+          else:
+              lines.append(
+                  "> ✅ **All entrypoints are within safe gas budget bounds (no regressions >10%).**\n"
+              )
+
+          lines.append("### Measured Differential vs Baseline (`docs/gas-benchmarks.md`)\n")
+          lines.append("| Entrypoint | Payload | CPU (Base) | CPU (New) | CPU Δ | Mem (Base) | Mem (New) | Mem Δ | Status |")
+          lines.append("| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | :---: |")
+          lines.extend(report_rows)
+
+          if regressions and not has_approval:
+              lines.append("\n### ❌ Gas Budget Violations")
+              for r in regressions:
+                  lines.append(
+                      f"- **`{r['entrypoint']}`** ({r['payload']}): "
+                      f"CPU {r['cpu_base']:,} → {r['cpu_meas']:,} ({r['cpu_pct']:+.1f}%), "
+                      f"Memory {r['mem_base']:,} → {r['mem_meas']:,} ({r['mem_pct']:+.1f}%)"
+                  )
+              lines.append(
+                  "\n> **Remediation**: Optimize contract gas consumption or obtain maintainer approval "
+                  "by adding the `gas-increase-approved` label to this PR."
+              )
+
+          report = "\n".join(lines)
+
+          # Write report for PR comment step
+          with open('gas_diff_report.md', 'w', encoding='utf-8') as f:
+              f.write(report)
+
+          # Write to GITHUB_STEP_SUMMARY
+          step_summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if step_summary:
+              with open(step_summary, 'a', encoding='utf-8') as f:
+                  f.write(report + "\n")
+
+          print("\n=== GAS REGRESSION REPORT ===")
+          print(report)
+
+          # 6. Exit with failure if regressions exist and not approved
+          if regressions and not has_approval:
+              print(f"\n❌ Failure: {len(regressions)} gas budget regressions detected without 'gas-increase-approved' label.", file=sys.stderr)
+              sys.exit(1)
+          else:
+              print("\n✅ Gas budget regression check passed.")
+          EOF
+
+      - name: Post Automated Gas Differential Comment on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const reportPath = 'gas_diff_report.md';
+            if (!fs.existsSync(reportPath)) {
+              console.log('No gas diff report found.');
+              return;
+            }
+            const report = fs.readFileSync(reportPath, 'utf8');
+            const marker = '<!-- soroban-gas-budget-differential-report -->';
+            const body = `${marker}\n${report}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+              console.log(`Updated existing gas differential comment ID ${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+              console.log('Created new gas differential comment');
+            }
