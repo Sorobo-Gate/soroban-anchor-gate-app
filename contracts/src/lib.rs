@@ -1683,6 +1683,7 @@ impl EscrowGate {
         caller: Address,
         payer_bps: u32,
     ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -1774,6 +1775,7 @@ impl EscrowGate {
         escrow_id: u64,
         caller: Address,
     ) -> Result<(), EscrowError> {
+        let _guard = ReentrancyGuard::enter(&env)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(EscrowError::NotInitialized);
         }
@@ -1831,6 +1833,14 @@ impl EscrowGate {
             .checked_sub(payer_amount)
             .ok_or(EscrowError::ArithmeticOverflow)?;
 
+        // Checks-Effects-Interactions: finalize state before external token transfers.
+        record.status = EscrowStatus::Disbursed;
+        env.storage().persistent().set(&key, &record);
+        env.storage().persistent().remove(&proposal_key);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
+
         if payer_amount > 0 {
             token_client.transfer(
                 &env.current_contract_address(),
@@ -1846,13 +1856,6 @@ impl EscrowGate {
                 &beneficiary_amount,
             );
         }
-
-        record.status = EscrowStatus::Disbursed;
-        env.storage().persistent().set(&key, &record);
-        env.storage().persistent().remove(&proposal_key);
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_EXTEND_TTL_THRESHOLD, INSTANCE_EXTEND_TTL_AMOUNT);
 
         env.events().publish(
             (Symbol::new(&env, "settlement_accepted"), escrow_id),

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
 	"net/http"
@@ -78,11 +79,9 @@ type ErrorResponse struct {
 }
 
 // NewServer creates a new HTTP API server instance.
+// Admin endpoints remain disabled (fail-closed) unless ADMIN_API_KEY or SetAdminKey is configured.
 func NewServer(contractID, rpcURL string, st store.IdempotencyStore) *Server {
-	adminKey := os.Getenv("ADMIN_API_KEY")
-	if adminKey == "" {
-		adminKey = "admin-secret-token"
-	}
+	adminKey := strings.TrimSpace(os.Getenv("ADMIN_API_KEY"))
 
 	s := &Server{
 		contractID: contractID,
@@ -165,7 +164,8 @@ func (s *Server) checkAdminAuth(r *http.Request) bool {
 	if authHeader != "" {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && (strings.EqualFold(parts[0], "bearer") || strings.EqualFold(parts[0], "apikey")) {
-			if strings.TrimSpace(parts[1]) == expectedKey {
+			provided := strings.TrimSpace(parts[1])
+			if subtle.ConstantTimeCompare([]byte(provided), []byte(expectedKey)) == 1 {
 				return true
 			}
 		}
@@ -173,7 +173,8 @@ func (s *Server) checkAdminAuth(r *http.Request) bool {
 
 	// Check X-API-Key header
 	if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
-		if strings.TrimSpace(apiKey) == expectedKey {
+		provided := strings.TrimSpace(apiKey)
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(expectedKey)) == 1 {
 			return true
 		}
 	}
