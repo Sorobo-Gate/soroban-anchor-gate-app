@@ -1,0 +1,54 @@
+{
+  "common": {
+    "appName": "SorobanAnchor Gate",
+    "loading": "Chargement...",
+    "connectWallet": "Connecter Freighter",
+    "connecting": "Connexion...",
+    "language": "Langue",
+    "selectLanguage": "Choisir la langue",
+    "networkTestnet": "Stellar Testnet",
+    "contractFee": "Frais du contrat : 200 BPS (2,0 %)",
+    "authoritativeContract": "Contrat officiel :",
+    "contractRepo": "Dépôt du contrat",
+    "appRepo": "Dépôt de l'application",
+    "footerTagline": "SorobanAnchor Gate — Séquestre par jalons non dépositaire et pont Anchor"
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "dashboardDesc": "Déposer et gérer les séquestres",
+    "createEscrow": "Créer un séquestre",
+    "createEscrowDesc": "Assistant étape par étape",
+    "disputes": "Litiges",
+    "disputesDesc": "Preuves et arbitrage"
+  },
+  "hero": {
+    "title": "Soroban Anchor Gate et Pont de Séquestre",
+    "subtitle": "Créer • Gérer • Suivre • Régler les séquestres sur Stellar",
+    "freighterTitle": "Portefeuille Freighter",
+    "freighterBadge": "Vérifié on-chain",
+    "escrowTitle": "Gestion du séquestre",
+    "escrowBadge": "Simple et sécurisé",
+    "transparencyTitle": "Transparence on-chain",
+    "transparencyBadge": "Données en temps réel"
+  },
+  "tabs": {
+    "deposit": "Déposer un séquestre par jalons",
+    "manage": "Gérer le séquestre (Libérer / Rembourser / Contester)"
+  },
+  "escrowForm": {
+    "cardTitle": "Déposer un séquestre par jalons",
+    "cardDescription": "Verrouillez des jetons SAC on-chain avec un engagement cryptographique de routage SEP-31.",
+    "beneficiaryLabel": "Clé publique Stellar du bénéficiaire",
+    "tokenAssetLabel": "Sélectionner l'actif du jeton",
+    "presetXlm": "SAC natif (XLM)",
+    "presetUsdc": "USDC SAC",
+    "presetCustom": "Jeton personnalisé (C...)",
+    "amountLabel": "Montant (Jetons)",
+    "lockDurationLabel": "Durée de verrouillage (Jours)",
+    "protocolFeeLabel": "Frais de protocole estimés (2,0 %)",
+    "tokensUnit": "{amount} jetons",
+    "tokenAddressLabel": "Adresse du contrat de jeton SAC",
+    "routingLabel": "Cible de retrait (Coordonnées bancaires SEP-9 / SEP-31)",
+    "submitButton": "Déposer le séquestre"
+  }
+}

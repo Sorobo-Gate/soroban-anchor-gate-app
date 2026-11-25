@@ -1,0 +1,54 @@
+{
+  "common": {
+    "appName": "SorobanAnchor Gate",
+    "loading": "Cargando...",
+    "connectWallet": "Conectar Freighter",
+    "connecting": "Conectando...",
+    "language": "Idioma",
+    "selectLanguage": "Seleccionar idioma",
+    "networkTestnet": "Stellar Testnet",
+    "contractFee": "Comisión del contrato: 200 BPS (2.0%)",
+    "authoritativeContract": "Contrato autorizado:",
+    "contractRepo": "Repositorio de contratos",
+    "appRepo": "Repositorio de la app",
+    "footerTagline": "SorobanAnchor Gate — Depósito en garantía sin custodia y puente Anchor"
+  },
+  "nav": {
+    "dashboard": "Panel",
+    "dashboardDesc": "Depositar y gestionar depósitos",
+    "createEscrow": "Crear depósito",
+    "createEscrowDesc": "Asistente paso a paso",
+    "disputes": "Disputas",
+    "disputesDesc": "Evidencia y arbitraje"
+  },
+  "hero": {
+    "title": "Soroban Anchor Gate y Puente de Depósito",
+    "subtitle": "Crear • Gestionar • Seguir • Liquidar depósitos en Stellar",
+    "freighterTitle": "Billetera Freighter",
+    "freighterBadge": "Verificado en cadena",
+    "escrowTitle": "Gestión de depósitos",
+    "escrowBadge": "Simple y seguro",
+    "transparencyTitle": "Transparencia en cadena",
+    "transparencyBadge": "Datos en tiempo real"
+  },
+  "tabs": {
+    "deposit": "Depositar depósito por hitos",
+    "manage": "Gestionar depósito (Liberar / Reembolsar / Disputar)"
+  },
+  "escrowForm": {
+    "cardTitle": "Depositar depósito por hitos",
+    "cardDescription": "Bloquee tokens SAC en cadena con compromiso criptográfico de enrutamiento SEP-31.",
+    "beneficiaryLabel": "Clave pública Stellar del beneficiario",
+    "tokenAssetLabel": "Seleccionar activo de token",
+    "presetXlm": "SAC nativo (XLM)",
+    "presetUsdc": "USDC SAC",
+    "presetCustom": "Token personalizado (C...)",
+    "amountLabel": "Cantidad (Tokens)",
+    "lockDurationLabel": "Duración del bloqueo (Días)",
+    "protocolFeeLabel": "Comisión estimada del protocolo (2.0%)",
+    "tokensUnit": "{amount} tokens",
+    "tokenAddressLabel": "Dirección del contrato de token SAC",
+    "routingLabel": "Destino de retiro (Coordenadas bancarias SEP-9 / SEP-31)",
+    "submitButton": "Depositar garantía"
+  }
+}

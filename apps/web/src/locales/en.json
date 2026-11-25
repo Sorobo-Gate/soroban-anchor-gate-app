@@ -1,0 +1,54 @@
+{
+  "common": {
+    "appName": "SorobanAnchor Gate",
+    "loading": "Loading...",
+    "connectWallet": "Connect Freighter",
+    "connecting": "Connecting...",
+    "language": "Language",
+    "selectLanguage": "Select language",
+    "networkTestnet": "Stellar Testnet",
+    "contractFee": "Contract Fee: 200 BPS (2.0%)",
+    "authoritativeContract": "Authoritative Contract:",
+    "contractRepo": "Contract Repo",
+    "appRepo": "App Repo",
+    "footerTagline": "SorobanAnchor Gate — Non-Custodial Milestone Escrow & Anchor Bridge"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "dashboardDesc": "Deposit & manage escrows",
+    "createEscrow": "Create Escrow",
+    "createEscrowDesc": "Step-by-step escrow wizard",
+    "disputes": "Disputes",
+    "disputesDesc": "Evidence & arbitration"
+  },
+  "hero": {
+    "title": "Soroban Anchor Gate & Escrow Bridge",
+    "subtitle": "Create • Manage • Track • Settle Escrows on Stellar",
+    "freighterTitle": "Freighter Wallet",
+    "freighterBadge": "Verified Onchain",
+    "escrowTitle": "Escrow Management",
+    "escrowBadge": "Simple & Secure",
+    "transparencyTitle": "Onchain Transparency",
+    "transparencyBadge": "Real-Time Data"
+  },
+  "tabs": {
+    "deposit": "Deposit Milestone Escrow",
+    "manage": "Manage Escrow (Release / Refund / Dispute)"
+  },
+  "escrowForm": {
+    "cardTitle": "Deposit Milestone Escrow",
+    "cardDescription": "Lock SAC tokens onchain with cryptographic SEP-31 anchor routing commitment.",
+    "beneficiaryLabel": "Beneficiary Stellar Public Key",
+    "tokenAssetLabel": "Select Token Asset",
+    "presetXlm": "Native SAC (XLM)",
+    "presetUsdc": "USDC SAC",
+    "presetCustom": "Custom Token (C...)",
+    "amountLabel": "Amount (Tokens)",
+    "lockDurationLabel": "Lock Duration (Days)",
+    "protocolFeeLabel": "Est. Protocol Fee (2.0%)",
+    "tokensUnit": "{amount} tokens",
+    "tokenAddressLabel": "SAC Token Contract Address",
+    "routingLabel": "Off-Ramp Target (SEP-9 / SEP-31 Banking Coordinates)",
+    "submitButton": "Deposit Escrow"
+  }
+}

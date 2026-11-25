@@ -1,0 +1,54 @@
+{
+  "common": {
+    "appName": "SorobanAnchor Gate",
+    "loading": "Carregando...",
+    "connectWallet": "Conectar Freighter",
+    "connecting": "Conectando...",
+    "language": "Idioma",
+    "selectLanguage": "Selecionar idioma",
+    "networkTestnet": "Stellar Testnet",
+    "contractFee": "Taxa do contrato: 200 BPS (2.0%)",
+    "authoritativeContract": "Contrato autorizado:",
+    "contractRepo": "Repositório de contratos",
+    "appRepo": "Repositório do app",
+    "footerTagline": "SorobanAnchor Gate — Custódia de marcos não custodial e ponte Anchor"
+  },
+  "nav": {
+    "dashboard": "Painel",
+    "dashboardDesc": "Depositar e gerenciar custódias",
+    "createEscrow": "Criar custódia",
+    "createEscrowDesc": "Assistente passo a passo",
+    "disputes": "Disputas",
+    "disputesDesc": "Evidências e arbitragem"
+  },
+  "hero": {
+    "title": "Soroban Anchor Gate e Ponte de Custódia",
+    "subtitle": "Criar • Gerenciar • Rastrear • Liquidar custódias na Stellar",
+    "freighterTitle": "Carteira Freighter",
+    "freighterBadge": "Verificado on-chain",
+    "escrowTitle": "Gestão de custódia",
+    "escrowBadge": "Simples e seguro",
+    "transparencyTitle": "Transparência on-chain",
+    "transparencyBadge": "Dados em tempo real"
+  },
+  "tabs": {
+    "deposit": "Depositar custódia por marcos",
+    "manage": "Gerenciar custódia (Liberar / Reembolsar / Disputar)"
+  },
+  "escrowForm": {
+    "cardTitle": "Depositar custódia por marcos",
+    "cardDescription": "Bloqueie tokens SAC on-chain com compromisso criptográfico de roteamento SEP-31.",
+    "beneficiaryLabel": "Chave pública Stellar do beneficiário",
+    "tokenAssetLabel": "Selecionar ativo de token",
+    "presetXlm": "SAC nativo (XLM)",
+    "presetUsdc": "USDC SAC",
+    "presetCustom": "Token personalizado (C...)",
+    "amountLabel": "Valor (Tokens)",
+    "lockDurationLabel": "Duração do bloqueio (Dias)",
+    "protocolFeeLabel": "Taxa estimada do protocolo (2.0%)",
+    "tokensUnit": "{amount} tokens",
+    "tokenAddressLabel": "Endereço do contrato do token SAC",
+    "routingLabel": "Destino de saque (Coordenadas bancárias SEP-9 / SEP-31)",
+    "submitButton": "Depositar custódia"
+  }
+}

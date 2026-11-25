@@ -19,6 +19,16 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Run Cargo Security Audit
+        run: |
+          cd contracts
+          cargo audit
+
       - name: Verify Contract Formatting
         run: |
           cd contracts
@@ -60,6 +70,11 @@ jobs:
           cd packages/contract-client
           npm ci
 
+      - name: Run SDK Vulnerability Audit
+        run: |
+          cd packages/contract-client
+          npm audit --audit-level=high
+
       - name: Run SDK Typecheck
         run: |
           cd packages/contract-client
@@ -90,6 +105,11 @@ jobs:
         run: |
           cd apps/web
           npm ci
+
+      - name: Run Web Vulnerability Audit
+        run: |
+          cd apps/web
+          npm audit --audit-level=high
 
       - name: Run ESLint Verification
         run: |
@@ -124,6 +144,14 @@ jobs:
         with:
           go-version: '1.22'
           cache-dependency-path: services/relay/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run Go Vulnerability Check
+        run: |
+          cd services/relay
+          "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: Verify Go Formatting
         run: |
