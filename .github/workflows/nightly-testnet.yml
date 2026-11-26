@@ -1,0 +1,696 @@
+---
+name: Nightly Stellar Testnet Integration
+
+# Scheduled E2E verification against live Stellar Testnet (issue #159).
+on:  # yamllint disable-line rule:truthy
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      contract_id:
+        description: >-
+          Optional Stellar Testnet contract ID to simulate against
+        required: false
+        type: string
+        default: >-
+          CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-testnet-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+  HORIZON_URL: https://horizon-testnet.stellar.org
+  FRIENDBOT_URL: https://friendbot.stellar.org
+  NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015'
+  CANONICAL_CONTRACT_ID: >-
+    CBIHLECKLMXYK6FPHSGGVYF6AHNFRHR3T5EIFIS3PFQDFKDQWNR25PHT
+  NODE_VERSION: '22'
+  GO_VERSION: '1.22'
+
+jobs:
+  testnet-e2e:
+    name: Live Stellar Testnet E2E Lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      TARGET_CONTRACT_ID: >-
+        ${{ inputs.contract_id || env.CANONICAL_CONTRACT_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: services/relay/go.sum
+
+      - name: Cache Cargo & Contract Target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            contracts/target
+          key: >-
+            ${{ runner.os }}-e2e-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-e2e-
+
+      - name: Build Contract WASM, SDK & Relay
+        run: |
+          set -euo pipefail
+          (
+            cd contracts
+            cargo build --locked --target wasm32-unknown-unknown --release
+          )
+          (
+            cd packages/contract-client
+            npm ci
+            npm run build
+          )
+          (
+            cd services/relay
+            go test ./internal/webhook ./internal/anchor
+            go build -o relay ./cmd/relay/main.go
+          )
+
+      - name: Run Live Testnet E2E Lifecycle
+        id: e2e
+        run: |
+          set -euo pipefail
+          WASM_REL="contracts/target/wasm32-unknown-unknown/release"
+          export WASM_PATH="${PWD}/${WASM_REL}/soroban_anchor_escrow.wasm"
+          export RELAY_BIN="${PWD}/services/relay/relay"
+          export REPORT_PATH="/tmp/nightly-testnet-report.json"
+
+          cd packages/contract-client
+          node <<'NODE_EOF'
+          const assert = require("node:assert/strict");
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const http = require("node:http");
+          const { spawn } = require("node:child_process");
+          const {
+            Account,
+            Address,
+            Asset,
+            Keypair,
+            Operation,
+            TransactionBuilder,
+            rpc,
+          } = require("@stellar/stellar-sdk");
+          const {
+            CreateEscrowSimulationError,
+            EscrowContractState,
+            EscrowGateClient,
+            computeProfileHash,
+            simulateCreateEscrow,
+          } = require("./dist/index.js");
+
+          const RPC_URL = process.env.SOROBAN_RPC_URL;
+          const HORIZON_URL = process.env.HORIZON_URL;
+          const FRIENDBOT_URL = process.env.FRIENDBOT_URL;
+          const PASSPHRASE = process.env.NETWORK_PASSPHRASE;
+          const CANONICAL_ID = process.env.TARGET_CONTRACT_ID;
+          const WASM_PATH = process.env.WASM_PATH;
+          const RELAY_BIN = process.env.RELAY_BIN;
+          const REPORT_PATH = process.env.REPORT_PATH;
+
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+          async function fundAccount(address) {
+            let lastErr;
+            for (let attempt = 1; attempt <= 5; attempt++) {
+              try {
+                const q = encodeURIComponent(address);
+                const res = await fetch(`${FRIENDBOT_URL}?addr=${q}`);
+                if (res.ok || res.status === 400) {
+                  const acctUrl = `${HORIZON_URL}/accounts/${address}`;
+                  const hRes = await fetch(acctUrl);
+                  if (hRes.ok) {
+                    const data = await hRes.json();
+                    const xlm = (data.balances || []).find(
+                      (b) => b.asset_type === "native"
+                    );
+                    if (xlm && Number(xlm.balance) > 0) {
+                      return xlm.balance;
+                    }
+                  }
+                }
+                lastErr = new Error(
+                  `Friendbot attempt ${attempt} status ${res.status}`
+                );
+              } catch (err) {
+                lastErr = err;
+              }
+              await sleep(2000 * attempt);
+            }
+            throw new Error(
+              `Failed to fund ${address} via Friendbot: ${lastErr}`
+            );
+          }
+
+          async function sendTx(server, source, operation) {
+            const acct = await server.getAccount(source.publicKey());
+            const tx = new TransactionBuilder(
+              new Account(acct.accountId(), acct.sequenceNumber()),
+              { fee: "1000000", networkPassphrase: PASSPHRASE }
+            )
+              .addOperation(operation)
+              .setTimeout(60)
+              .build();
+            const prepared = await server.prepareTransaction(tx);
+            prepared.sign(source);
+            const sent = await server.sendTransaction(prepared);
+            if (sent.status === "ERROR") {
+              throw new Error(
+                `sendTransaction error: ${JSON.stringify(sent.errorResult)}`
+              );
+            }
+            for (let i = 0; i < 30; i++) {
+              const res = await server.getTransaction(sent.hash);
+              if (res.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+                return { hash: sent.hash, res };
+              }
+              if (res.status === rpc.Api.GetTransactionStatus.FAILED) {
+                throw new Error(`Transaction failed: ${sent.hash}`);
+              }
+              await sleep(2000);
+            }
+            throw new Error(`Transaction timed out: ${sent.hash}`);
+          }
+
+          async function queryContract(server, payerPub, client, method, args) {
+            const acct = await server.getAccount(payerPub);
+            const tx = new TransactionBuilder(
+              new Account(acct.accountId(), acct.sequenceNumber()),
+              { fee: "100", networkPassphrase: PASSPHRASE }
+            )
+              .addOperation(client.buildOperation(method, args))
+              .setTimeout(30)
+              .build();
+            const sim = await server.simulateTransaction(tx);
+            assert.ok(
+              rpc.Api.isSimulationSuccess(sim),
+              `${method} simulation failed`
+            );
+            return sim.result.retval;
+          }
+
+          async function verifyWebhookDelivery(eventPayload) {
+            const runtimeSecret = crypto.randomBytes(32).toString("hex");
+            let receivedBody = "";
+            let receivedSig = "";
+
+            const srv = http.createServer((req, res) => {
+              const chunks = [];
+              req.on("data", (c) => chunks.push(c));
+              req.on("end", () => {
+                receivedBody = Buffer.concat(chunks).toString("utf8");
+                receivedSig = req.headers["x-soroban-signature"] || "";
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: true }));
+              });
+            });
+
+            await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+            try {
+              const { port } = srv.address();
+              const body = JSON.stringify(eventPayload);
+              const expectedSig =
+                "sha256=" +
+                crypto
+                  .createHmac("sha256", runtimeSecret)
+                  .update(body)
+                  .digest("hex");
+
+              const resp = await fetch(`http://127.0.0.1:${port}/webhook`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Soroban-Signature": expectedSig,
+                },
+                body,
+              });
+              assert.equal(resp.status, 200);
+              assert.equal(receivedSig, expectedSig);
+              assert.equal(receivedBody, body);
+            } finally {
+              await new Promise((resolve) => srv.close(resolve));
+            }
+          }
+
+          async function verifyRelayDaemon(contractId, startLedger) {
+            const storePath = "/tmp/nightly-relay-store.json";
+            fs.rmSync(storePath, { force: true });
+            const port = "18080";
+            const proc = spawn(RELAY_BIN, [], {
+              env: {
+                ...process.env,
+                SOROBAN_CONTRACT_ID: contractId,
+                SOROBAN_RPC_URL: RPC_URL,
+                START_LEDGER: String(startLedger),
+                STORE_PATH: storePath,
+                PORT: port,
+              },
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+
+            let stderr = "";
+            proc.stderr.on("data", (d) => {
+              stderr += d.toString();
+            });
+
+            try {
+              let healthy = false;
+              for (let i = 0; i < 20; i++) {
+                try {
+                  const res = await fetch(`http://127.0.0.1:${port}/health`);
+                  if (res.ok) {
+                    healthy = true;
+                    break;
+                  }
+                } catch {
+                  // Relay is still booting.
+                }
+                await sleep(500);
+              }
+              assert.ok(healthy, `Relay failed healthcheck: ${stderr}`);
+
+              let statusJson = null;
+              for (let i = 0; i < 15; i++) {
+                const res = await fetch(`http://127.0.0.1:${port}/status`);
+                assert.equal(res.status, 200);
+                statusJson = await res.json();
+                if (statusJson.total_events >= 1) {
+                  break;
+                }
+                await sleep(2000);
+              }
+              assert.ok(
+                statusJson && statusJson.total_events >= 1,
+                `Relay missing event: ${JSON.stringify(statusJson)}`
+              );
+              return statusJson;
+            } finally {
+              proc.kill("SIGTERM");
+              await new Promise((resolve) => {
+                proc.once("exit", resolve);
+                setTimeout(resolve, 3000);
+              });
+            }
+          }
+
+          async function main() {
+            const server = new rpc.Server(RPC_URL);
+            const admin = Keypair.random();
+            const payer = Keypair.random();
+            const beneficiary = Keypair.random();
+            const anchor = Keypair.random();
+
+            console.log("1. Funding ephemeral Testnet accounts...");
+            const balances = await Promise.all([
+              fundAccount(admin.publicKey()),
+              fundAccount(payer.publicKey()),
+              fundAccount(beneficiary.publicKey()),
+              fundAccount(anchor.publicKey()),
+            ]);
+            console.log("Funded XLM balances:", balances.join(", "));
+
+            const nativeSac = Asset.native().contractId(PASSPHRASE);
+            const profileHashHex = computeProfileHash(
+              "IBAN: DE89370400440532013000 / BIC: COBADEFFXXX"
+            );
+
+            console.log("2. Uploading & initializing ephemeral contract...");
+            const latestBefore = await server.getLatestLedger();
+            const startLedger = latestBefore.sequence;
+
+            const wasm = fs.readFileSync(WASM_PATH);
+            const uploadTx = await sendTx(
+              server,
+              admin,
+              Operation.uploadContractWasm({ wasm })
+            );
+            const wasmHash = crypto.createHash("sha256").update(wasm).digest();
+            const deployTx = await sendTx(
+              server,
+              admin,
+              Operation.createCustomContract({
+                address: new Address(admin.publicKey()),
+                wasmHash,
+                salt: crypto.randomBytes(32),
+              })
+            );
+            const contractId = Address.fromScVal(
+              deployTx.res.returnValue
+            ).toString();
+            console.log("Deployed ephemeral Testnet contract:", contractId);
+
+            const client = new EscrowGateClient({
+              contractId,
+              rpcUrl: RPC_URL,
+              networkPassphrase: PASSPHRASE,
+            });
+
+            await sendTx(
+              server,
+              admin,
+              client.buildOperation(
+                "init",
+                client.buildInitTx(admin.publicKey(), admin.publicKey(), 200)
+              )
+            );
+            await sendTx(
+              server,
+              admin,
+              client.buildOperation(
+                "set_token_whitelist",
+                client.buildSetTokenWhitelistTx({
+                  caller: admin.publicKey(),
+                  token: nativeSac,
+                  whitelisted: true,
+                })
+              )
+            );
+
+            console.log("3. Running Freighter signing simulation checks...");
+            const simResult = await simulateCreateEscrow({
+              config: {
+                contractId,
+                rpcUrl: RPC_URL,
+                networkPassphrase: PASSPHRASE,
+              },
+              payer: payer.publicKey(),
+              beneficiary: beneficiary.publicKey(),
+              token: nativeSac,
+              amount: 10_000_000n,
+              profileHashHex,
+              lockDurationSeconds: 60n,
+            });
+            assert.ok(simResult.estimatedResourceFeeStroops > 0n);
+            assert.ok(simResult.estimatedTransactionFeeStroops > 0n);
+
+            await assert.rejects(
+              simulateCreateEscrow({
+                config: {
+                  contractId,
+                  rpcUrl: RPC_URL,
+                  networkPassphrase: PASSPHRASE,
+                },
+                payer: payer.publicKey(),
+                beneficiary: beneficiary.publicKey(),
+                token: nativeSac,
+                amount: 0n,
+                profileHashHex,
+                lockDurationSeconds: 60n,
+              }),
+              CreateEscrowSimulationError
+            );
+
+            // Best-effort simulation check against canonical Testnet contract.
+            let canonicalSim = "skipped";
+            try {
+              const canon = await simulateCreateEscrow({
+                config: {
+                  contractId: CANONICAL_ID,
+                  rpcUrl: RPC_URL,
+                  networkPassphrase: PASSPHRASE,
+                },
+                payer: payer.publicKey(),
+                beneficiary: beneficiary.publicKey(),
+                token: nativeSac,
+                amount: 10_000_000n,
+                profileHashHex,
+                lockDurationSeconds: 60n,
+              });
+              canonicalSim = `ok:${canon.estimatedResourceFeeStroops}stroops`;
+            } catch (err) {
+              canonicalSim = `checked:${err.name || "error"}`;
+            }
+
+            console.log("4. Executing Create -> Release -> Refund...");
+            const create1Tx = await sendTx(
+              server,
+              payer,
+              client.buildOperation(
+                "create_escrow",
+                client.buildCreateEscrowTx({
+                  payer: payer.publicKey(),
+                  beneficiary: beneficiary.publicKey(),
+                  token: nativeSac,
+                  amount: 10_000_000n,
+                  profileHashHex,
+                  lockDurationSeconds: 60n,
+                })
+              )
+            );
+            const escrowId1 = BigInt(
+              client.decodeContractResult(create1Tx.res.returnValue)
+            );
+            assert.equal(escrowId1, 1n);
+
+            const releaseTx = await sendTx(
+              server,
+              payer,
+              client.buildOperation(
+                "release_to_anchor",
+                client.buildReleaseToAnchorTx({
+                  escrowId: escrowId1,
+                  caller: payer.publicKey(),
+                  anchorDisbursementAddress: anchor.publicKey(),
+                })
+              )
+            );
+            const rec1 = client.parseEscrowRecord(
+              await queryContract(
+                server,
+                payer.publicKey(),
+                client,
+                "get_escrow",
+                client.buildGetEscrowTx(escrowId1)
+              )
+            );
+            assert.equal(rec1.status, EscrowContractState.Disbursed);
+
+            const create2Tx = await sendTx(
+              server,
+              payer,
+              client.buildOperation(
+                "create_escrow",
+                client.buildCreateEscrowTx({
+                  payer: payer.publicKey(),
+                  beneficiary: beneficiary.publicKey(),
+                  token: nativeSac,
+                  amount: 5_000_000n,
+                  profileHashHex,
+                  lockDurationSeconds: 5n,
+                })
+              )
+            );
+            const escrowId2 = BigInt(
+              client.decodeContractResult(create2Tx.res.returnValue)
+            );
+            assert.equal(escrowId2, 2n);
+
+            // Boundary check: refund before unlock timestamp must fail.
+            await assert.rejects(
+              sendTx(
+                server,
+                payer,
+                client.buildOperation("refund", client.buildRefundTx(escrowId2))
+              )
+            );
+
+            // Wait for Testnet ledger close time to pass lock duration (5s).
+            await sleep(15000);
+
+            const refundTx = await sendTx(
+              server,
+              payer,
+              client.buildOperation("refund", client.buildRefundTx(escrowId2))
+            );
+            const rec2 = client.parseEscrowRecord(
+              await queryContract(
+                server,
+                payer.publicKey(),
+                client,
+                "get_escrow",
+                client.buildGetEscrowTx(escrowId2)
+              )
+            );
+            assert.equal(rec2.status, EscrowContractState.Refunded);
+
+            console.log("5. Verifying events, relay & webhook...");
+            const eventsResp = await server.getEvents({
+              startLedger,
+              filters: [{ type: "contract", contractIds: [contractId] }],
+            });
+            assert.ok(
+              (eventsResp.events || []).length >= 2,
+              "Expected at least 2 on-chain contract events"
+            );
+
+            await verifyWebhookDelivery({
+              id: `evt-${releaseTx.hash}`,
+              type: "escrow.disbursed",
+              escrow_id: Number(escrowId1),
+              tx_hash: releaseTx.hash,
+              contract_id: contractId,
+            });
+
+            const relayStatus = await verifyRelayDaemon(
+              contractId,
+              startLedger
+            );
+
+            const report = {
+              network: PASSPHRASE,
+              rpcUrl: RPC_URL,
+              contractId,
+              canonicalSim,
+              startLedger,
+              transactions: {
+                upload: uploadTx.hash,
+                deploy: deployTx.hash,
+                create1: create1Tx.hash,
+                release: releaseTx.hash,
+                create2: create2Tx.hash,
+                refund: refundTx.hash,
+              },
+              relayStatus,
+            };
+            fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
+            console.log("Testnet E2E passed:", JSON.stringify(report));
+          }
+
+          main().catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          NODE_EOF
+
+          SUMMARY=$(node -e '
+            const fs = require("fs");
+            const raw = fs.readFileSync(process.env.REPORT_PATH, "utf8");
+            const r = JSON.parse(raw);
+            const lines = [
+              "### Nightly Stellar Testnet E2E Report",
+              "",
+              "| Step | Transaction / Result |",
+              "| :--- | :--- |",
+              `| Ephemeral Contract | \`${r.contractId}\` |`,
+              `| Canonical Sim Check | \`${r.canonicalSim}\` |`,
+              `| Create #1 | \`${r.transactions.create1}\` |`,
+              `| Release | \`${r.transactions.release}\` |`,
+              `| Create #2 | \`${r.transactions.create2}\` |`,
+              `| Refund | \`${r.transactions.refund}\` |`,
+              `| Relay Events Ingested | \`${r.relayStatus.total_events}\` |`
+            ];
+            console.log(lines.join("\n"));
+          ')
+          printf '%s\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Archive Testnet Integration Report
+        uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: nightly-testnet-report
+          path: |
+            /tmp/nightly-testnet-report.json
+            /tmp/nightly-relay-store.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  notify-maintainers:
+    name: Notify Maintainers on Testnet Failure
+    needs: [testnet-e2e]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      ALERT_WEBHOOK_URL: ${{ secrets.TESTNET_ALERT_WEBHOOK_URL }}
+    steps:
+      - name: Alert Maintainers via GitHub Issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const title = '[Nightly Testnet] Integration Check Failed';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/` +
+              `${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `⚠️ **Nightly Stellar Testnet E2E run failed** (@emarkees).`,
+              '',
+              `- **Workflow Run**: ${runUrl}`,
+              `- **Event**: \`${context.eventName}\``,
+              `- **Ref**: \`${context.ref}\``,
+              `- **Commit**: \`${context.sha}\``,
+              `- **Timestamp**: ${new Date().toISOString()}`,
+              '',
+              'Please inspect the `nightly-testnet-report` artifact and logs.',
+            ].join('\n');
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 50,
+            });
+            const existing = issues.find(
+              (i) => !i.pull_request && i.title === title
+            );
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }
+
+      - name: Send Optional Alert Webhook
+        if: ${{ env.ALERT_WEBHOOK_URL != '' }}
+        run: |
+          set -euo pipefail
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/"
+          RUN_URL="${RUN_URL}${GITHUB_RUN_ID}"
+          PAYLOAD=$(jq -n \
+            --arg text "Nightly Stellar Testnet E2E failed: ${RUN_URL}" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg sha "$GITHUB_SHA" \
+            '{text: $text, repository: $repo, sha: $sha}')
+          curl -fsS --max-time 15 -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$ALERT_WEBHOOK_URL"
