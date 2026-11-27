@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,4 +152,35 @@ pub enum DataKey {
     SecondaryBeneficiary(u64),
     // Partial dispute settlements with mutual consent (Issue 58)
     SettlementProposal(u64),
+    // Cryptographic KYC attestation (Issue 48)
+    KycAttestation(Address),
+    // Dynamic anchor collateralisation (Issue 66)
+    AnchorStake(Address),
+    AnchorStakeTime(Address),
+}
+
+/// Stored KYC attestation: profile hash + oracle pubkey + attestation timestamp.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KycAttestation {
+    pub profile_hash: BytesN<32>,
+    pub oracle_pubkey: BytesN<32>,
+    pub attested_at: u64,
+}
+
+/// A single hop in a cross-currency swap route.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SwapRoute {
+    pub router: Address,
+    pub token_path: Vec<Address>,
+    pub min_return_amount: i128,
+}
+
+/// Collateral record for an anchor's on-chain stake.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnchorStake {
+    pub amount: i128,
+    pub staked_at: u64,
 }
